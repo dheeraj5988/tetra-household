@@ -1,0 +1,21 @@
+# Copy everything below this line and paste into backend/.env file
+# ================================================================
+
+# Gmail IMAP Configuration
+GMAIL_USER=your-email@gmail.com
+GMAIL_APP_PASSWORD=your-16-digit-app-password
+
+# Server Configuration
+PORT=5000
+
+# Frontend URL for CORS
+FRONTEND_URL=http://localhost:3000
+
+# ================================================================
+# INSTRUCTIONS:
+# 1. Replace "your-email@gmail.com" with your actual Gmail address
+# 2. Replace "your-16-digit-app-password" with your 16-digit Gmail app password
+# 3. Save the file as .env in the backend/ folder
+# 4. Make sure there are NO spaces around the = sign
+# 5. Do NOT include quotes around the values
+
