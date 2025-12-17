@@ -3,7 +3,12 @@
  * Handles all backend API calls
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+// Use relative URLs for same-origin requests (Vercel deployment)
+// Falls back to localhost for local development
+const API_BASE_URL = 
+  typeof window !== 'undefined' 
+    ? '' // Use relative URLs in browser (same origin)
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'; // Server-side fallback
 
 /**
  * Fetch the latest Netflix verification link from backend
@@ -12,11 +17,11 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
  */
 export async function fetchLatestNetflixLink(minutesAgo: number = 30) {
   try {
-    const url = `${API_BASE_URL}/api/latest-netflix-link?minutes=${minutesAgo}`;
+    // Use relative URL for same-origin requests (works in Vercel)
+    const url = `/api/latest-netflix-link?minutes=${minutesAgo}`;
     
     // Debug logging
     console.log('🔗 Fetching from:', url);
-    console.log('🌐 API Base URL:', API_BASE_URL);
     
     // Create an AbortController for timeout
     const controller = new AbortController();
@@ -73,7 +78,7 @@ export async function fetchLatestNetflixLink(minutesAgo: number = 30) {
     // Handle network errors
     if (error instanceof TypeError) {
       if (error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
-        throw new Error('Failed to connect to backend server. Please ensure the backend is running on port 5000 and check your browser console for CORS errors.');
+        throw new Error('Failed to connect to server. Please check your internet connection and try again.');
       }
     }
     
@@ -92,7 +97,7 @@ export async function fetchLatestNetflixLink(minutesAgo: number = 30) {
  */
 export async function checkBackendHealth() {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/health`, {
+    const response = await fetch('/api/health', {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

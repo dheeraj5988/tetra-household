@@ -1,0 +1,12 @@
+{
+  "functions": {
+    "app/api/latest-netflix-link/route.ts": {
+      "maxDuration": 60
+    }
+  },
+  "env": {
+    "GMAIL_USER": "@gmail_user",
+    "GMAIL_APP_PASSWORD": "@gmail_app_password"
+  }
+}
+
