@@ -18,6 +18,8 @@ git push origin main
 
 ## Step 3: Configure Environment Variables
 
+**IMPORTANT**: Environment variables must be set in Vercel dashboard, NOT in vercel.json file.
+
 In Vercel project settings, add these environment variables:
 
 ### Required Environment Variables:
@@ -34,11 +36,15 @@ In Vercel project settings, add these environment variables:
 
 1. Go to your Vercel project dashboard
 2. Click **Settings** → **Environment Variables**
-3. Add each variable:
-   - **Name**: `GMAIL_USER`
-   - **Value**: Your Gmail address
-   - **Environment**: Production, Preview, Development (select all)
-4. Repeat for `GMAIL_APP_PASSWORD`
+3. Click **Add New**
+4. For each variable:
+   - **Key**: `GMAIL_USER` (exactly as shown, case-sensitive)
+   - **Value**: Your Gmail address (e.g., `dsharma259889@gmail.com`)
+   - **Environment**: Select **Production**, **Preview**, and **Development** (check all three)
+   - Click **Save**
+5. Repeat step 3-4 for `GMAIL_APP_PASSWORD`
+
+**Note**: Do NOT use `@secret_name` syntax. Enter the actual values directly.
 
 ## Step 4: Deploy
 
