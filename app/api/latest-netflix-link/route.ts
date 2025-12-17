@@ -7,7 +7,7 @@ export const maxDuration = 60; // 60 seconds for Vercel serverless functions
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const minutesAgo = parseInt(searchParams.get('minutes') || '30', 10);
+    const minutesAgo = parseInt(searchParams.get('minutes') || '20', 10);
 
     console.log(`🔍 Searching for Netflix emails from last ${minutesAgo} minutes...`);
 
@@ -22,6 +22,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    console.log('📧 Email found - Subject:', email.subject);
+    console.log('📧 Email HTML length:', email.html?.length || 0);
+    console.log('📧 From:', email.from?.value?.[0]?.address);
+
     if (!isNetflixVerificationEmail(email)) {
       console.log('⚠️ Email found but does not appear to be a verification email');
       return NextResponse.json({
@@ -35,15 +39,18 @@ export async function GET(request: NextRequest) {
 
     if (!link) {
       console.log('⚠️ Email found but no verification link could be extracted');
+      console.log('🔎 Email HTML (first 500 chars):', (email.html || '').slice(0, 500));
       return NextResponse.json({
         success: false,
         error: 'No verification link found in email',
-        message: 'Could not extract a verification URL from the email content',
+        message: "Found verification email but couldn't extract the 'Yes, this was me' link",
         emailDate: email.date?.toISOString() || null,
       });
     }
 
     console.log('✅ Successfully extracted Netflix verification link');
+    console.log('🔗 Link:', link);
+    console.log('🔗 Link contains token:', link.includes('token='));
 
     return NextResponse.json({
       success: true,
@@ -51,6 +58,7 @@ export async function GET(request: NextRequest) {
       emailDate: email.date?.toISOString() || null,
       subject: email.subject || null,
       from: email.from?.value?.[0]?.address || null,
+      linkExpiry: '15 minutes from email receipt',
     });
   } catch (error: any) {
     console.error('❌ Error fetching Netflix link:', error);
