@@ -126,4 +126,3 @@ Once everything is running:
 3. Check that the frontend displays the link properly
 4. Test the "Update My Device" button opens the correct URL
 
-
