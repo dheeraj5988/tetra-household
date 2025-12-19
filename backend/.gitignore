@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Environment variables
 .env
@@ -12,6 +11,9 @@ google-credentials.json
 *.credentials.json
 *.key
 *.pem
+*.json
+!package.json
+!package-lock.json
 
 # Logs
 logs

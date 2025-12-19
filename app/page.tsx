@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
 import { CheckCircle2, XCircle, AlertTriangle, Loader2, ExternalLink, ArrowLeft } from "lucide-react"
-import { fetchLatestNetflixLink } from "@/lib/api"
+import { fetchLatestNetflixLink, validateUser } from "@/lib/api"
 
 interface User {
   mobile: string
@@ -16,8 +16,6 @@ interface User {
 }
 
 type ValidationStatus = "idle" | "checking" | "fetching" | "success" | "expired" | "not-found" | "error"
-
-const AUTHORIZED_USERS: User[] = [{ mobile: "9667618484", validTill: "2029-12-12", role: "admin" }]
 
 export default function NetflixHouseholdUpdater() {
   const [mobileNumber, setMobileNumber] = useState("")
@@ -50,28 +48,52 @@ export default function NetflixHouseholdUpdater() {
     setStatus("checking")
     setErrorMessage("")
 
-    // Check user authorization
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    try {
+      // Validate user with Google Sheets
+      console.log('🔍 Validating user with Google Sheets...')
+      const validationResult = await validateUser(mobileNumber)
 
-    const user = AUTHORIZED_USERS.find((u) => u.mobile === mobileNumber)
+      if (!validationResult.success) {
+        setErrorMessage(validationResult.error || "Validation failed")
+        setStatus("error")
+        return
+      }
 
-    if (!user) {
-      setStatus("not-found")
+      if (!validationResult.valid) {
+        // User not found or expired
+        if (validationResult.validTill) {
+          // User exists but expired
+          setValidatedUser({
+            mobile: mobileNumber,
+            validTill: validationResult.validTill,
+            role: "user"
+          })
+          setStatus("expired")
+        } else {
+          // User not found
+          setStatus("not-found")
+        }
+        setErrorMessage(validationResult.message)
+        return
+      }
+
+      // User is valid, now fetch Netflix link from backend
+      setValidatedUser({
+        mobile: mobileNumber,
+        validTill: validationResult.validTill || "",
+        role: "user"
+      })
+      setStatus("fetching")
+    } catch (error) {
+      console.error("Error validating user:", error)
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to validate user. Please try again."
+      )
+      setStatus("error")
       return
     }
-
-    const currentDate = new Date()
-    const validTillDate = new Date(user.validTill)
-
-    if (currentDate > validTillDate) {
-      setValidatedUser(user)
-      setStatus("expired")
-      return
-    }
-
-    // User is valid, now fetch Netflix link from backend
-    setValidatedUser(user)
-    setStatus("fetching")
 
     try {
       // Call backend API to fetch latest Netflix verification link
