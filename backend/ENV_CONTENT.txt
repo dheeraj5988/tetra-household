@@ -19,3 +19,4 @@ FRONTEND_URL=http://localhost:3000
 # 4. Make sure there are NO spaces around the = sign
 # 5. Do NOT include quotes around the values
 
+

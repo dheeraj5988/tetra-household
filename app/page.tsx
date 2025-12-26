@@ -17,7 +17,7 @@ interface User {
 
 type ValidationStatus = "idle" | "checking" | "fetching" | "success" | "expired" | "not-found" | "error"
 
-const AUTHORIZED_USERS: User[] = [{ mobile: "9667618484", validTill: "2029-12-12", role: "admin" }]
+const AUTHORIZED_USERS: User[] = [{ mobile: "9772880079", validTill: "2029-12-12", role: "admin" }]
 
 export default function NetflixHouseholdUpdater() {
   const [mobileNumber, setMobileNumber] = useState("")
