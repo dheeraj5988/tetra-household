@@ -6,31 +6,26 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
-import { CheckCircle2, XCircle, AlertTriangle, Loader2, ExternalLink, ArrowLeft } from "lucide-react"
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, ArrowLeft } from "lucide-react"
 import { fetchLatestNetflixLink } from "@/lib/api"
 
-interface User {
-  mobile: string
-  validTill: string
-  role: string
-}
-
-type ValidationStatus = "idle" | "checking" | "fetching" | "success" | "expired" | "not-found" | "error"
-
-const AUTHORIZED_USERS: User[] = [{ mobile: "9772880079", validTill: "2029-12-12", role: "admin" }]
+type ValidationStatus = "idle" | "fetching" | "success" | "error"
 
 export default function NetflixHouseholdUpdater() {
   const [mobileNumber, setMobileNumber] = useState("")
   const [status, setStatus] = useState<ValidationStatus>("idle")
-  const [validatedUser, setValidatedUser] = useState<User | null>(null)
   const [isButtonHovered, setIsButtonHovered] = useState(false)
   const [netflixLink, setNetflixLink] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string>("")
   const [isClient, setIsClient] = useState(false)
 
-  // Ensure this only runs on client side
+  // Load saved number on mount
   useEffect(() => {
     setIsClient(true)
+    const savedNumber = localStorage.getItem("netflix_saved_mobile")
+    if (savedNumber) {
+      setMobileNumber(savedNumber)
+    }
   }, [])
 
   const handleMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -41,58 +36,34 @@ export default function NetflixHouseholdUpdater() {
   const checkPermission = async () => {
     if (mobileNumber.length !== 10) return
     
-    // Ensure we're on client side
     if (typeof window === 'undefined') {
       setErrorMessage("Please wait for the page to load completely")
       return
     }
 
-    setStatus("checking")
+    // Save the number to local storage for the next time the user visits
+    localStorage.setItem("netflix_saved_mobile", mobileNumber)
+
+    setStatus("fetching")
     setErrorMessage("")
 
-    // Check user authorization
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    const user = AUTHORIZED_USERS.find((u) => u.mobile === mobileNumber)
-
-    if (!user) {
-      setStatus("not-found")
-      return
-    }
-
-    const currentDate = new Date()
-    const validTillDate = new Date(user.validTill)
-
-    if (currentDate > validTillDate) {
-      setValidatedUser(user)
-      setStatus("expired")
-      return
-    }
-
-    // User is valid, now fetch Netflix link from backend
-    setValidatedUser(user)
-    setStatus("fetching")
-
     try {
-      // Call backend API to fetch latest Netflix verification link
+      // Fetch Netflix verification link from backend directly
       const response = await fetchLatestNetflixLink(30)
 
       if (response && response.success && response.link) {
         setNetflixLink(response.link)
         setStatus("success")
       } else if (response && !response.success) {
-        // Backend returned an error response
         setErrorMessage(response.message || response.error || "Failed to fetch verification link")
         setStatus("error")
       } else {
-        // Unexpected response format
         setErrorMessage("Invalid response from server")
         setStatus("error")
       }
     } catch (error) {
       console.error("Error fetching Netflix link:", error)
       
-      // Provide user-friendly error messages
       let errorMsg = "Failed to connect to backend. Please ensure the backend server is running on port 5000."
       
       if (error instanceof Error) {
@@ -107,18 +78,19 @@ export default function NetflixHouseholdUpdater() {
   }
 
   const handleReset = () => {
-    setMobileNumber("")
+    setMobileNumber("") // Clears input so they can type a new one
     setStatus("idle")
-    setValidatedUser(null)
     setNetflixLink(null)
     setErrorMessage("")
   }
 
   const handleUpdateDevice = () => {
-    // Open Netflix verification link in new tab
     const link = netflixLink || "https://netflix.com/verify-household"
     window.open(link, "_blank")
   }
+
+  // Prevent hydration mismatch by not rendering until client is ready
+  if (!isClient) return null;
 
   return (
     <div className="min-h-screen bg-netflix-dark flex flex-col items-center justify-center p-4 relative overflow-hidden">
@@ -160,26 +132,15 @@ export default function NetflixHouseholdUpdater() {
                 disabled={mobileNumber.length !== 10}
                 className="w-full bg-netflix-red hover:bg-netflix-red-hover text-white font-semibold h-12 text-base rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-netflix-red/50"
               >
-                Check Permission
+                Get Update Link
               </Button>
-            </div>
-          )}
-
-          {status === "checking" && (
-            <div className="flex flex-col items-center justify-center py-8 space-y-4 animate-fade-in">
-              <Loader2 className="w-12 h-12 text-netflix-red animate-spin" />
-              <p className="text-netflix-light text-lg font-medium">Verifying your access...</p>
             </div>
           )}
 
           {status === "fetching" && (
             <div className="flex flex-col items-center justify-center py-8 space-y-4 animate-fade-in">
-              <CheckCircle2 className="w-12 h-12 text-green-500 mb-2" />
-              <p className="text-green-500 text-lg font-semibold">✓ Access Verified!</p>
-              <div className="flex items-center space-x-2">
-                <Loader2 className="w-5 h-5 text-netflix-red animate-spin" />
-                <p className="text-netflix-light">Fetching latest update link...</p>
-              </div>
+              <Loader2 className="w-12 h-12 text-netflix-red animate-spin" />
+              <p className="text-netflix-light text-lg font-medium">Fetching latest update link...</p>
             </div>
           )}
 
@@ -187,7 +148,7 @@ export default function NetflixHouseholdUpdater() {
             <div className="space-y-6 animate-fade-in">
               <div className="text-center space-y-3">
                 <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto" />
-                <h3 className="text-2xl font-bold text-white">Access Verified!</h3>
+                <h3 className="text-2xl font-bold text-white">Link Fetched!</h3>
                 <p className="text-netflix-gray text-sm">Click below to verify your device with Netflix</p>
               </div>
 
@@ -209,67 +170,7 @@ export default function NetflixHouseholdUpdater() {
                 className="w-full text-netflix-gray hover:text-white hover:bg-netflix-input/50 h-11"
               >
                 <ArrowLeft className="w-4 h-4 mr-2" />
-                Check Another Number
-              </Button>
-            </div>
-          )}
-
-          {status === "expired" && validatedUser && (
-            <div className="space-y-6 animate-fade-in">
-              <div className="text-center space-y-3">
-                <AlertTriangle className="w-16 h-16 text-yellow-500 mx-auto" />
-                <h3 className="text-xl font-bold text-white">⚠ Access Expired</h3>
-                <p className="text-netflix-gray">
-                  Your access has expired on{" "}
-                  <span className="text-white font-semibold">
-                    {new Date(validatedUser.validTill).toLocaleDateString("en-US", {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })}
-                  </span>
-                </p>
-              </div>
-
-              <div className="bg-netflix-dark/50 border border-netflix-border rounded-lg p-4">
-                <p className="text-netflix-light text-sm text-center">Please contact admin for renewal</p>
-              </div>
-
-              <Button
-                onClick={handleReset}
-                variant="outline"
-                className="w-full border-netflix-border text-white hover:bg-netflix-input/50 h-11 bg-transparent"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Check Another Number
-              </Button>
-            </div>
-          )}
-
-          {status === "not-found" && (
-            <div className="space-y-6 animate-fade-in">
-              <div className="text-center space-y-3">
-                <XCircle className="w-16 h-16 text-red-500 mx-auto" />
-                <h3 className="text-xl font-bold text-white">✗ Mobile Number Not Found</h3>
-                <p className="text-netflix-gray text-sm">Please check your number or contact admin</p>
-              </div>
-
-              <div className="bg-netflix-dark/50 border border-netflix-border rounded-lg p-4 space-y-2">
-                <p className="text-netflix-light text-sm">
-                  <strong className="text-white">Need help?</strong>
-                </p>
-                <p className="text-netflix-muted text-xs">
-                  Contact your administrator to get access or verify your mobile number
-                </p>
-              </div>
-
-              <Button
-                onClick={handleReset}
-                variant="outline"
-                className="w-full border-netflix-border text-white hover:bg-netflix-input/50 h-11 bg-transparent"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Try Again
+                Use Another Number
               </Button>
             </div>
           )}
@@ -312,11 +213,6 @@ export default function NetflixHouseholdUpdater() {
             </div>
           )}
         </Card>
-
-        {/* Footer */}
-        <div className="text-center mt-6">
-          <p className="text-netflix-muted text-xs">For authorized users only</p>
-        </div>
       </div>
     </div>
   )
