@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getStoreData, saveStoreData, AppData } from '@/lib/store';
+import { getStoreData, saveStoreData, getActiveStorageStatus, AppData } from '@/lib/store';
 import { verifyAdminRequest } from '@/lib/admin-auth';
-import { isRedisConfigured } from '@/lib/redis';
 
 export async function GET(request: NextRequest) {
   if (!verifyAdminRequest(request)) {
@@ -44,11 +43,15 @@ export async function GET(request: NextRequest) {
     activeCookies,
   };
 
+  const storageStatus = await getActiveStorageStatus();
+
   return NextResponse.json({
     ok: true,
     storage: {
-      isRedis: isRedisConfigured(),
-      type: isRedisConfigured() ? 'Upstash Redis / Vercel KV' : 'Local Fallback',
+      provider: storageStatus.provider,
+      label: storageStatus.label,
+      isPersistent: storageStatus.isPersistent,
+      details: storageStatus.details,
     },
     data: {
       customers: data.customers,

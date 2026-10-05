@@ -140,7 +140,12 @@ export default function AdminPage() {
   const [cookieError, setCookieError] = useState("")
   const [testingCookieId, setTestingCookieId] = useState<string | null>(null)
   const [testingAllCookies, setTestingAllCookies] = useState(false)
-  const [storageInfo, setStorageInfo] = useState<{ isRedis: boolean; type: string } | null>(null)
+  const [storageInfo, setStorageInfo] = useState<{
+    provider?: string
+    label?: string
+    isPersistent?: boolean
+    details?: string
+  } | null>(null)
 
   // Settings state
   const [newPassword, setNewPassword] = useState("")
@@ -773,7 +778,25 @@ export default function AdminPage() {
           </button>
         </nav>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          {storageInfo?.isPersistent ? (
+            <div
+              className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+              title={storageInfo.details || "Connected to persistent database"}
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span>{storageInfo.label || "Supabase (persistent)"}</span>
+            </div>
+          ) : (
+            <div
+              className="bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+              title={storageInfo?.details || "Running in temporary local container memory"}
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span>{storageInfo?.label || "Local/temporary"}</span>
+            </div>
+          )}
+
           <Button
             onClick={() => window.open("/", "_blank")}
             variant="outline"
@@ -1153,17 +1176,22 @@ export default function AdminPage() {
               <div className="space-y-4 animate-fade-in">
                 {/* Storage & Auto-Keepalive Status Bar */}
                 <div className="bg-netflix-card border border-netflix-border rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-                  <div className="flex items-center gap-2">
-                    {storageInfo?.isRedis ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {storageInfo?.isPersistent ? (
                       <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-md font-semibold flex items-center gap-1.5">
-                        <Database className="w-3.5 h-3.5" /> Storage: Upstash Redis (Persistent & Auto-Synced)
+                        <Database className="w-3.5 h-3.5" /> Storage: {storageInfo.label}
                       </span>
                     ) : (
                       <span
                         className="bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-md font-semibold flex items-center gap-1.5"
-                        title="Stored in local memory. Connect Upstash Redis in your Vercel project to persist sessions permanently across restarts."
+                        title={storageInfo?.details || "Sessions stored in temporary server memory. Run SQL in Supabase to persist."}
                       >
-                        <Database className="w-3.5 h-3.5" /> Storage: Local Fallback (Connect Upstash Redis in Vercel)
+                        <Database className="w-3.5 h-3.5" /> Storage: {storageInfo?.label || "Local/temporary"}
+                      </span>
+                    )}
+                    {storageInfo?.details && !storageInfo.isPersistent && (
+                      <span className="text-[11px] text-amber-300/80 font-mono">
+                        ({storageInfo.details})
                       </span>
                     )}
                   </div>

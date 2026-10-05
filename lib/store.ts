@@ -6,6 +6,12 @@ import {
   getRedisStoreData,
   saveRedisStoreData,
 } from './redis';
+import {
+  isSupabaseConfigured,
+  getSupabaseStoreData,
+  saveSupabaseStoreData,
+  testSupabaseConnection,
+} from './supabase';
 
 export interface CustomerHistoryItem {
   id: string;
@@ -140,11 +146,25 @@ export function getStoreDataSync(): AppData {
 
 /**
  * Primary asynchronous store reader:
- * 1. Checks Upstash Redis if configured
- * 2. Falls back to in-memory cache / /tmp / initial_data.json
+ * 1. Checks Supabase if configured and tables exist
+ * 2. Checks Upstash Redis if configured
+ * 3. Falls back to in-memory cache / /tmp / initial_data.json
  */
 export async function getStoreData(): Promise<AppData> {
-  // 1. Try reading from Upstash Redis / Vercel KV
+  // 1. Try reading from Supabase
+  if (isSupabaseConfigured()) {
+    try {
+      const supabaseData = await getSupabaseStoreData();
+      if (supabaseData && Array.isArray(supabaseData.customers)) {
+        memoryCache = supabaseData;
+        return supabaseData;
+      }
+    } catch (err) {
+      console.warn('Could not read from Supabase, trying fallback store:', err);
+    }
+  }
+
+  // 2. Try reading from Upstash Redis / Vercel KV
   if (isRedisConfigured()) {
     try {
       const redisData = await getRedisStoreData();
@@ -157,12 +177,12 @@ export async function getStoreData(): Promise<AppData> {
     }
   }
 
-  // 2. Return memory cache if available
+  // 3. Return memory cache if available
   if (memoryCache) {
     return memoryCache;
   }
 
-  // 3. Try reading from /tmp
+  // 4. Try reading from /tmp
   try {
     if (fs.existsSync(TMP_FILE_PATH)) {
       const content = fs.readFileSync(TMP_FILE_PATH, 'utf-8');
@@ -176,12 +196,16 @@ export async function getStoreData(): Promise<AppData> {
     console.warn('Could not read from /tmp/tetra_store.json:', err);
   }
 
-  // 4. Fallback to initial seed
+  // 5. Fallback to initial seed
   const seed = loadInitialSeed();
   memoryCache = seed;
 
-  // If Redis is configured but currently empty, seed it automatically
-  if (isRedisConfigured()) {
+  // Auto-seed persistent store if configured
+  if (isSupabaseConfigured()) {
+    saveSupabaseStoreData(seed).catch((err) =>
+      console.error('Initial Supabase seed write failed:', err)
+    );
+  } else if (isRedisConfigured()) {
     saveRedisStoreData(seed).catch((err) =>
       console.error('Initial Redis seed write failed:', err)
     );
@@ -197,14 +221,24 @@ export async function getStoreData(): Promise<AppData> {
 
 /**
  * Primary asynchronous store saver:
- * 1. Persists to Upstash Redis if configured
- * 2. Writes to /tmp and local seed file
- * 3. Updates in-memory cache
+ * 1. Persists to Supabase if configured
+ * 2. Persists to Upstash Redis if configured
+ * 3. Writes to /tmp and local seed file
+ * 4. Updates in-memory cache
  */
 export async function saveStoreData(data: AppData): Promise<void> {
   memoryCache = data;
 
-  // 1. Write to Redis if configured
+  // 1. Write to Supabase if configured
+  if (isSupabaseConfigured()) {
+    try {
+      await saveSupabaseStoreData(data);
+    } catch (err) {
+      console.error('Error saving store data to Supabase:', err);
+    }
+  }
+
+  // 2. Write to Redis if configured
   if (isRedisConfigured()) {
     try {
       await saveRedisStoreData(data);
@@ -213,14 +247,14 @@ export async function saveStoreData(data: AppData): Promise<void> {
     }
   }
 
-  // 2. Write to /tmp
+  // 3. Write to /tmp
   try {
     fs.writeFileSync(TMP_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error writing to /tmp/tetra_store.json:', err);
   }
 
-  // 3. Write to local project seed when possible (in local dev)
+  // 4. Write to local project seed when possible (in local dev)
   try {
     const dir = path.dirname(LOCAL_SEED_PATH);
     if (!fs.existsSync(dir)) {
@@ -228,6 +262,51 @@ export async function saveStoreData(data: AppData): Promise<void> {
     }
     fs.writeFileSync(LOCAL_SEED_PATH, JSON.stringify(data, null, 2), 'utf-8');
   } catch {}
+}
+
+/**
+ * Returns current active storage provider and persistence status.
+ */
+export async function getActiveStorageStatus(): Promise<{
+  provider: 'supabase' | 'redis' | 'local';
+  label: string;
+  isPersistent: boolean;
+  details?: string;
+}> {
+  if (isSupabaseConfigured()) {
+    const test = await testSupabaseConnection();
+    if (test.tablesExist) {
+      return {
+        provider: 'supabase',
+        label: 'Supabase (persistent)',
+        isPersistent: true,
+        details: 'Verified connected to Supabase PostgreSQL database',
+      };
+    } else {
+      return {
+        provider: 'local',
+        label: 'Local/temporary (Supabase tables missing - run SQL)',
+        isPersistent: false,
+        details: test.message,
+      };
+    }
+  }
+
+  if (isRedisConfigured()) {
+    return {
+      provider: 'redis',
+      label: 'Upstash Redis (persistent)',
+      isPersistent: true,
+      details: 'Connected to Upstash Redis store',
+    };
+  }
+
+  return {
+    provider: 'local',
+    label: 'Local/temporary',
+    isPersistent: false,
+    details: 'Storing in temporary container memory. Vanishes on restart.',
+  };
 }
 
 export async function getCustomerByMobile(mobile: string): Promise<Customer | undefined> {

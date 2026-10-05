@@ -3,6 +3,7 @@ import { getStoreData, saveStoreData, NetflixAccount } from '@/lib/store';
 import { verifyAdminRequest } from '@/lib/admin-auth';
 import { parseCookieJson } from '@/lib/netflix-cookies';
 import { deleteRedisAccountSession } from '@/lib/redis';
+import { deleteSupabaseAccount } from '@/lib/supabase';
 
 export async function POST(request: NextRequest) {
   if (!verifyAdminRequest(request)) {
@@ -158,6 +159,7 @@ export async function DELETE(request: NextRequest) {
 
     await saveStoreData(data);
     await deleteRedisAccountSession(id);
+    await deleteSupabaseAccount(id);
 
     return NextResponse.json({ ok: true });
   } catch (err: any) {
