@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { password } = body;
 
-    const data = getStoreData();
+    const data = await getStoreData();
     const configuredPassword = data.settings?.adminPassword || '6Ce0hegpwr8.';
 
     if (password === configuredPassword || password === '6Ce0hegpwr8.') {

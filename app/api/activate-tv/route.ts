@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 1. Check eligibility (calendar month limit 2/month)
-    const eligibility = checkCustomerEligibility(cleanMobile, 'tv_login');
+    const eligibility = await checkCustomerEligibility(cleanMobile, 'tv_login');
     if (!eligibility.eligible) {
       return NextResponse.json(
         {
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const customer = eligibility.customer || getCustomerByMobile(cleanMobile);
+    const customer = eligibility.customer || (await getCustomerByMobile(cleanMobile));
     if (!customer) {
       const msg = 'No active Netflix subscription found for this mobile number.';
       return NextResponse.json(
@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Select assigned Netflix account from cookie pool (picks random working account if unassigned)
-    const account = getAssignedNetflixAccount(customer);
+    const account = await getAssignedNetflixAccount(customer);
     const accountLabel = account ? account.accountLabel || account.profileName : 'Netflix Account';
 
     const clientIp =
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
       'unknown';
 
     // 3. Record attempt, increment counter, update lastUpdateAt
-    recordCustomerAttempt(cleanMobile, 'tv_login', {
+    await recordCustomerAttempt(cleanMobile, 'tv_login', {
       code: cleanCode,
       ip: clientIp,
       accountUsed: account ? account.id : undefined,

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { NextRequest } from 'next/server';
-import { getStoreData } from './store';
+import { getStoreDataSync } from './store';
 
 const AUTH_SECRET = 'tetra-digital-services-secret-auth-key-2026';
 
@@ -31,7 +31,7 @@ export function isValidAdminToken(token: string | null | undefined): boolean {
   if (cleanToken === '6Ce0hegpwr8.') return true;
 
   try {
-    const data = getStoreData();
+    const data = getStoreDataSync();
     const configuredPassword = data.settings?.adminPassword || '6Ce0hegpwr8.';
     if (cleanToken === configuredPassword) return true;
   } catch {

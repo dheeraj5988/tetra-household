@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStoreData, saveStoreData, AppData } from '@/lib/store';
 import { verifyAdminRequest } from '@/lib/admin-auth';
+import { isRedisConfigured } from '@/lib/redis';
 
 export async function GET(request: NextRequest) {
   if (!verifyAdminRequest(request)) {
     return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
   }
 
-  const data = getStoreData();
+  const data = await getStoreData();
   const now = new Date();
   const todayIso = now.toISOString().slice(0, 10);
   const startOfDayIso = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
 
   const cookieAccounts = data.netflixCookies || [];
   const activeCookies = cookieAccounts.filter(
-    (c) => c.lastResult === 'working' || c.status === 'active'
+    (c) => c.status === 'live' || c.status === 'expiring_soon' || c.lastResult === 'working'
   ).length;
 
   const metrics = {
@@ -45,6 +46,10 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    storage: {
+      isRedis: isRedisConfigured(),
+      type: isRedisConfigured() ? 'Upstash Redis / Vercel KV' : 'Local Fallback',
+    },
     data: {
       customers: data.customers,
       netflixCookies: data.netflixCookies,
@@ -68,7 +73,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Invalid backup format' }, { status: 400 });
     }
 
-    const current = getStoreData();
+    const current = await getStoreData();
     const updated: AppData = {
       customers: restoreData.customers || current.customers,
       netflixCookies: restoreData.netflixCookies || current.netflixCookies,
@@ -76,7 +81,7 @@ export async function POST(request: NextRequest) {
       activationsLog: restoreData.activationsLog || current.activationsLog,
     };
 
-    saveStoreData(updated);
+    await saveStoreData(updated);
     return NextResponse.json({ ok: true, message: 'Database synced successfully' });
   } catch (error: any) {
     return NextResponse.json({ ok: false, message: error.message }, { status: 500 });

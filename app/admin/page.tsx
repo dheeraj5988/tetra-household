@@ -31,6 +31,8 @@ import {
   AlertTriangle,
   Loader2,
   Tv,
+  Database,
+  XCircle,
 } from "lucide-react"
 import { calculateExpiryDate, formatDisplayDate, parseBulkSubscribers } from "@/lib/validity"
 
@@ -60,10 +62,13 @@ interface NetflixAccount {
   profileName: string
   accountLabel: string
   accountEmail?: string
+  userAgent?: string
   cookies: any[]
-  status: "active" | "expired" | "unknown"
+  status: "live" | "expiring_soon" | "expired" | "needs_reimport" | "active" | "unknown"
+  earliestExpiryIso?: string | null
   lastCheckedAt: string | null
-  lastResult: "working" | "expired" | "missing_keys" | null
+  lastRefreshedAt?: string | null
+  lastResult: "working" | "refreshed" | "expired" | "needs_reimport" | "missing_keys" | null
   lastDetail: string
 }
 
@@ -131,9 +136,11 @@ export default function AdminPage() {
   const [cookieProfileName, setCookieProfileName] = useState("")
   const [cookieEmail, setCookieEmail] = useState("")
   const [cookieRawJson, setCookieRawJson] = useState("")
+  const [cookieUserAgent, setCookieUserAgent] = useState("")
   const [cookieError, setCookieError] = useState("")
   const [testingCookieId, setTestingCookieId] = useState<string | null>(null)
   const [testingAllCookies, setTestingAllCookies] = useState(false)
+  const [storageInfo, setStorageInfo] = useState<{ isRedis: boolean; type: string } | null>(null)
 
   // Settings state
   const [newPassword, setNewPassword] = useState("")
@@ -215,6 +222,9 @@ export default function AdminPage() {
         setSettings(data.data.settings || null)
         setActivationsLog(data.data.activationsLog || [])
         setMetrics(data.data.metrics || null)
+        if (data.storage) {
+          setStorageInfo(data.storage)
+        }
 
         if (data.data.settings) {
           setSupportWhatsapp(data.data.settings.supportWhatsapp || "")
@@ -512,6 +522,7 @@ export default function AdminPage() {
           accountLabel: cookieProfileName || "Netflix Account",
           accountEmail: cookieEmail,
           cookiesRaw: cookieRawJson,
+          userAgent: cookieUserAgent || (typeof navigator !== "undefined" ? navigator.userAgent : ""),
         }),
       })
 
@@ -522,6 +533,7 @@ export default function AdminPage() {
         setCookieProfileName("")
         setCookieEmail("")
         setCookieRawJson("")
+        setCookieUserAgent("")
         if (token) fetchAdminData(token)
       } else {
         setCookieError(data.message || "Failed to save cookies")
@@ -1139,11 +1151,33 @@ export default function AdminPage() {
             {/* 3. NETFLIX COOKIE VAULT TAB */}
             {activeTab === "cookies" && (
               <div className="space-y-4 animate-fade-in">
+                {/* Storage & Auto-Keepalive Status Bar */}
+                <div className="bg-netflix-card border border-netflix-border rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    {storageInfo?.isRedis ? (
+                      <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-md font-semibold flex items-center gap-1.5">
+                        <Database className="w-3.5 h-3.5" /> Storage: Upstash Redis (Persistent & Auto-Synced)
+                      </span>
+                    ) : (
+                      <span
+                        className="bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-md font-semibold flex items-center gap-1.5"
+                        title="Stored in local memory. Connect Upstash Redis in your Vercel project to persist sessions permanently across restarts."
+                      >
+                        <Database className="w-3.5 h-3.5" /> Storage: Local Fallback (Connect Upstash Redis in Vercel)
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-netflix-muted font-mono text-[11px]">
+                    <Clock className="w-3.5 h-3.5 text-netflix-light" />
+                    <span>Auto-Keepalive: Scheduled every 6h via Vercel Cron</span>
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-base font-bold text-white">Netflix Accounts & Cookie Pool</h2>
+                    <h2 className="text-base font-bold text-white">Netflix Accounts & Session Vault</h2>
                     <p className="text-netflix-muted text-xs">
-                      Manage Netflix accounts and cookies directly from here. No Vercel environment variables needed!
+                      Sessions are preserved, bound to browser User-Agent, and automatically refreshed to stay alive.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1153,7 +1187,7 @@ export default function AdminPage() {
                       className="bg-netflix-red hover:bg-netflix-red-hover text-white text-xs h-9 cursor-pointer"
                     >
                       {testingAllCookies ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Play className="w-3.5 h-3.5 mr-1" />}
-                      Test All Accounts
+                      Test & Keep Alive All
                     </Button>
                     <Button
                       onClick={() => {
@@ -1161,6 +1195,7 @@ export default function AdminPage() {
                         setCookieProfileName("")
                         setCookieEmail("")
                         setCookieRawJson("")
+                        setCookieUserAgent(typeof navigator !== "undefined" ? navigator.userAgent : "")
                         setCookieError("")
                         setShowAddCookieModal(true)
                       }}
@@ -1176,28 +1211,63 @@ export default function AdminPage() {
                   {netflixCookies.map((acc) => {
                     const isTesting = testingCookieId === acc.id
                     const assignedUsersCount = customers.filter((c) => c.assignedAccountId === acc.id).length
+                    const isNeedsReimport = acc.status === "needs_reimport"
+                    const isExpired = acc.status === "expired" || acc.lastResult === "expired"
+                    const isExpiringSoon = acc.status === "expiring_soon"
+                    const isLive =
+                      acc.status === "live" ||
+                      (acc.lastResult === "working" && !isNeedsReimport && !isExpiringSoon && !isExpired)
 
                     return (
-                      <Card key={acc.id} className="bg-netflix-card border-netflix-border p-5 rounded-xl space-y-4">
+                      <Card
+                        key={acc.id}
+                        className={`bg-netflix-card border p-5 rounded-xl space-y-4 ${
+                          isNeedsReimport
+                            ? "border-red-500/70 shadow-lg shadow-red-950/20"
+                            : isExpiringSoon
+                            ? "border-amber-500/50"
+                            : "border-netflix-border"
+                        }`}
+                      >
                         <div className="flex items-start justify-between">
                           <div>
                             <h3 className="font-bold text-white text-base">{acc.accountLabel || acc.profileName}</h3>
                             <p className="text-netflix-muted text-xs font-mono">{acc.accountEmail || "No email note"}</p>
                           </div>
-                          {acc.lastResult === "working" ? (
-                            <span className="bg-green-500/20 text-green-400 text-xs px-2 py-0.5 rounded font-semibold flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> Working
+                          {isLive ? (
+                            <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs px-2.5 py-0.5 rounded font-semibold flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Live
                             </span>
-                          ) : acc.lastResult === "expired" ? (
-                            <span className="bg-red-500/20 text-red-400 text-xs px-2 py-0.5 rounded font-semibold flex items-center gap-1">
-                              <AlertTriangle className="w-3.5 h-3.5" /> Expired
+                          ) : isExpiringSoon ? (
+                            <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2.5 py-0.5 rounded font-semibold flex items-center gap-1">
+                              <Clock className="w-3.5 h-3.5" /> Expiring Soon
+                            </span>
+                          ) : isNeedsReimport ? (
+                            <span className="bg-red-500/25 text-red-400 border border-red-500/50 text-xs px-2.5 py-0.5 rounded font-bold flex items-center gap-1 animate-pulse">
+                              <AlertTriangle className="w-3.5 h-3.5" /> Needs Re-import
+                            </span>
+                          ) : isExpired ? (
+                            <span className="bg-red-950/40 text-red-300 border border-red-800/40 text-xs px-2.5 py-0.5 rounded font-semibold flex items-center gap-1">
+                              <XCircle className="w-3.5 h-3.5" /> Expired
                             </span>
                           ) : (
-                            <span className="bg-yellow-500/20 text-yellow-400 text-xs px-2 py-0.5 rounded font-semibold">
+                            <span className="bg-yellow-500/20 text-yellow-400 text-xs px-2.5 py-0.5 rounded font-semibold">
                               Untested
                             </span>
                           )}
                         </div>
+
+                        {isNeedsReimport && (
+                          <div className="bg-red-950/40 border border-red-800/60 rounded-lg p-2.5 text-xs text-red-200 flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-semibold text-red-300">Session Invalidated by Netflix</p>
+                              <p className="text-[11px] text-red-300/80">
+                                Netflix redirected to login. Automatic keepalive cannot refresh this session. Please export fresh cookies and edit this account.
+                              </p>
+                            </div>
+                          </div>
+                        )}
 
                         <div className="bg-netflix-dark/60 border border-netflix-border/50 rounded-lg p-3 text-xs space-y-1.5">
                           <div className="flex justify-between">
@@ -1208,10 +1278,44 @@ export default function AdminPage() {
                             <span className="text-netflix-muted">Assigned Customers:</span>
                             <span className="text-white font-mono">{assignedUsersCount} users</span>
                           </div>
+                          {acc.earliestExpiryIso && (
+                            <div className="flex justify-between">
+                              <span className="text-netflix-muted">Token Expiry:</span>
+                              <span
+                                className={`font-mono ${
+                                  isExpiringSoon ? "text-amber-300" : isExpired ? "text-red-400" : "text-netflix-light"
+                                }`}
+                              >
+                                {new Date(acc.earliestExpiryIso).toLocaleDateString("en-IN")}
+                              </span>
+                            </div>
+                          )}
                           {acc.lastCheckedAt && (
                             <div className="flex justify-between">
-                              <span className="text-netflix-muted">Last Tested:</span>
-                              <span className="text-netflix-light">{new Date(acc.lastCheckedAt).toLocaleString("en-IN")}</span>
+                              <span className="text-netflix-muted">Last Checked:</span>
+                              <span className="text-netflix-light">
+                                {new Date(acc.lastCheckedAt).toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                          )}
+                          {acc.lastRefreshedAt && (
+                            <div className="flex justify-between">
+                              <span className="text-netflix-muted">Last Refreshed:</span>
+                              <span className="text-emerald-400 font-medium">
+                                {new Date(acc.lastRefreshedAt).toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                          )}
+                          {acc.userAgent && (
+                            <div className="flex justify-between items-center pt-1 border-t border-netflix-border/30 text-[11px]">
+                              <span className="text-netflix-muted">Device:</span>
+                              <span className="text-netflix-light font-mono truncate max-w-[170px]" title={acc.userAgent}>
+                                {acc.userAgent.includes("Mac")
+                                  ? "Chrome (macOS)"
+                                  : acc.userAgent.includes("Windows")
+                                  ? "Chrome (Windows)"
+                                  : "Desktop Browser"}
+                              </span>
                             </div>
                           )}
                           {acc.lastDetail && (
@@ -1228,7 +1332,7 @@ export default function AdminPage() {
                             className="flex-1 bg-netflix-red hover:bg-netflix-red-hover text-white text-xs h-9 cursor-pointer"
                           >
                             {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Play className="w-3.5 h-3.5 mr-1" />}
-                            Test Cookies
+                            Test & Keep Alive
                           </Button>
                           <Button
                             onClick={() => {
@@ -1236,11 +1340,13 @@ export default function AdminPage() {
                               setCookieProfileName(acc.profileName)
                               setCookieEmail(acc.accountEmail || "")
                               setCookieRawJson(JSON.stringify(acc.cookies, null, 2))
+                              setCookieUserAgent(acc.userAgent || (typeof navigator !== "undefined" ? navigator.userAgent : ""))
                               setCookieError("")
                               setShowAddCookieModal(true)
                             }}
                             variant="outline"
                             className="border-netflix-border text-netflix-light hover:text-white text-xs h-9 bg-transparent cursor-pointer"
+                            title="Edit account cookies"
                           >
                             <Edit className="w-3.5 h-3.5" />
                           </Button>
@@ -1248,6 +1354,7 @@ export default function AdminPage() {
                             onClick={() => handleDeleteCookie(acc.id)}
                             variant="outline"
                             className="border-netflix-border text-netflix-muted hover:text-red-400 text-xs h-9 bg-transparent cursor-pointer"
+                            title="Delete account"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
@@ -1705,11 +1812,34 @@ export default function AdminPage() {
                 </p>
               </div>
 
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-netflix-light font-medium block">Bound Device User-Agent</label>
+                  <button
+                    type="button"
+                    onClick={() => setCookieUserAgent(typeof navigator !== "undefined" ? navigator.userAgent : "")}
+                    className="text-[11px] text-netflix-red hover:underline cursor-pointer"
+                  >
+                    Auto-Detect Browser
+                  </button>
+                </div>
+                <Input
+                  type="text"
+                  placeholder="e.g. Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)..."
+                  value={cookieUserAgent}
+                  onChange={(e) => setCookieUserAgent(e.target.value)}
+                  className="bg-netflix-input border-netflix-border text-white text-xs h-9 font-mono"
+                />
+                <p className="text-[11px] text-netflix-muted">
+                  Used for keepalive requests so Netflix sees the exact same browser/device footprint.
+                </p>
+              </div>
+
               {cookieError && <p className="text-red-400 text-xs">{cookieError}</p>}
 
               <div className="flex gap-2 pt-2">
                 <Button type="submit" className="flex-1 bg-netflix-red hover:bg-netflix-red-hover text-white text-xs h-10 cursor-pointer">
-                  {editingCookie ? "Update Account" : "Save to Vault"}
+                  {editingCookie ? "Update Account & Session" : "Save to Vault"}
                 </Button>
                 <Button
                   type="button"

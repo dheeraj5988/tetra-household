@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     const subDate = subscriptionDate || new Date().toISOString().slice(0, 10);
     const expDate = expiryDate || calculateExpiryDate(subDate, validity);
 
-    const data = getStoreData();
+    const data = await getStoreData();
     const nowIso = new Date().toISOString();
 
     let customer: Customer;
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
       data.customers.unshift(customer);
     }
 
-    saveStoreData(data);
+    await saveStoreData(data);
     return NextResponse.json({ ok: true, customer });
   } catch (err: any) {
     return NextResponse.json({ ok: false, message: err.message }, { status: 500 });
@@ -102,9 +102,9 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Missing customer ID' }, { status: 400 });
     }
 
-    const data = getStoreData();
+    const data = await getStoreData();
     data.customers = data.customers.filter((c) => c.id !== id);
-    saveStoreData(data);
+    await saveStoreData(data);
 
     return NextResponse.json({ ok: true });
   } catch (err: any) {

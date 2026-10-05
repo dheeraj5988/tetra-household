@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: 'No rows provided' }, { status: 400 });
     }
 
-    const data = getStoreData();
+    const data = await getStoreData();
     const nowIso = new Date().toISOString();
     let importedCount = 0;
     let updatedCount = 0;
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    saveStoreData(data);
+    await saveStoreData(data);
 
     return NextResponse.json({
       ok: true,

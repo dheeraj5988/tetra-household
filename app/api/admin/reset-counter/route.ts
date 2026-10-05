@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: 'Missing customer ID' }, { status: 400 });
     }
 
-    const success = resetCustomerCooldown(customerId);
+    const success = await resetCustomerCooldown(customerId);
     if (!success) {
       return NextResponse.json({ ok: false, message: 'Customer not found' }, { status: 404 });
     }

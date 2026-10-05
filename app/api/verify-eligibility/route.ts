@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = checkCustomerEligibility(cleanMobile, action);
+    const result = await checkCustomerEligibility(cleanMobile, action);
 
     if (!result.eligible) {
       return NextResponse.json({

@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { adminPassword, companyName, supportWhatsapp, maxUpdatesPerMonth, cooldownDays } = body;
 
-    const data = getStoreData();
+    const data = await getStoreData();
 
     if (adminPassword && adminPassword.trim()) {
       data.settings.adminPassword = adminPassword.trim();
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       data.settings.cooldownDays = Math.max(1, parseInt(cooldownDays, 10) || 15);
     }
 
-    saveStoreData(data);
+    await saveStoreData(data);
     return NextResponse.json({ ok: true, settings: data.settings });
   } catch (err: any) {
     return NextResponse.json({ ok: false, message: err.message }, { status: 500 });

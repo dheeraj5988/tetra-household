@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
       request.headers.get('x-real-ip') ||
       'unknown';
 
-    recordCustomerAttempt(cleanMobile, 'household_update', {
+    await recordCustomerAttempt(cleanMobile, 'household_update', {
       ip: clientIp,
       notes: 'Netflix household update link accessed',
     });

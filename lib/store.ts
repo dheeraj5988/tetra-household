@@ -1,6 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { BrowserCookie } from './netflix-cookies';
+import {
+  isRedisConfigured,
+  getRedisStoreData,
+  saveRedisStoreData,
+} from './redis';
 
 export interface CustomerHistoryItem {
   id: string;
@@ -34,11 +39,21 @@ export interface NetflixAccount {
   profileName: string;
   accountLabel: string;
   accountEmail?: string;
+  userAgent?: string;
+  deviceMetadata?: {
+    platform?: string;
+    browser?: string;
+    importedAt?: string;
+  };
   cookies: BrowserCookie[];
-  status: 'active' | 'expired' | 'unknown';
+  status: 'live' | 'expiring_soon' | 'expired' | 'needs_reimport' | 'active' | 'unknown';
+  earliestExpiry?: number | null;
+  earliestExpiryIso?: string | null;
   lastCheckedAt: string | null;
-  lastResult: 'working' | 'expired' | 'missing_keys' | null;
+  lastRefreshedAt?: string | null;
+  lastResult: 'working' | 'refreshed' | 'expired' | 'needs_reimport' | 'missing_keys' | null;
   lastDetail: string;
+  consecutiveFailures?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -76,7 +91,7 @@ const LOCAL_SEED_PATH = path.join(process.cwd(), 'data', 'initial_data.json');
 // In-memory cache for fast serverless responses
 let memoryCache: AppData | null = null;
 
-function loadInitialSeed(): AppData {
+export function loadInitialSeed(): AppData {
   try {
     if (fs.existsSync(LOCAL_SEED_PATH)) {
       const content = fs.readFileSync(LOCAL_SEED_PATH, 'utf-8');
@@ -86,7 +101,6 @@ function loadInitialSeed(): AppData {
     console.error('Error reading local seed file:', err);
   }
 
-  // Hardcoded fallback if file reading fails
   return {
     customers: [],
     netflixCookies: [],
@@ -102,12 +116,53 @@ function loadInitialSeed(): AppData {
   };
 }
 
-export function getStoreData(): AppData {
+/**
+ * Synchronous store access for sync code or fallbacks
+ */
+export function getStoreDataSync(): AppData {
+  if (memoryCache) return memoryCache;
+
+  try {
+    if (fs.existsSync(TMP_FILE_PATH)) {
+      const content = fs.readFileSync(TMP_FILE_PATH, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (parsed && Array.isArray(parsed.customers)) {
+        memoryCache = parsed;
+        return parsed;
+      }
+    }
+  } catch {}
+
+  const seed = loadInitialSeed();
+  memoryCache = seed;
+  return seed;
+}
+
+/**
+ * Primary asynchronous store reader:
+ * 1. Checks Upstash Redis if configured
+ * 2. Falls back to in-memory cache / /tmp / initial_data.json
+ */
+export async function getStoreData(): Promise<AppData> {
+  // 1. Try reading from Upstash Redis / Vercel KV
+  if (isRedisConfigured()) {
+    try {
+      const redisData = await getRedisStoreData();
+      if (redisData && Array.isArray(redisData.customers)) {
+        memoryCache = redisData;
+        return redisData;
+      }
+    } catch (err) {
+      console.warn('Could not read from Redis, using local fallback:', err);
+    }
+  }
+
+  // 2. Return memory cache if available
   if (memoryCache) {
     return memoryCache;
   }
 
-  // 1. Try reading from /tmp
+  // 3. Try reading from /tmp
   try {
     if (fs.existsSync(TMP_FILE_PATH)) {
       const content = fs.readFileSync(TMP_FILE_PATH, 'utf-8');
@@ -121,45 +176,63 @@ export function getStoreData(): AppData {
     console.warn('Could not read from /tmp/tetra_store.json:', err);
   }
 
-  // 2. Fallback to initial seed
+  // 4. Fallback to initial seed
   const seed = loadInitialSeed();
   memoryCache = seed;
+
+  // If Redis is configured but currently empty, seed it automatically
+  if (isRedisConfigured()) {
+    saveRedisStoreData(seed).catch((err) =>
+      console.error('Initial Redis seed write failed:', err)
+    );
+  }
 
   // Attempt to write seed to /tmp for future reads
   try {
     fs.writeFileSync(TMP_FILE_PATH, JSON.stringify(seed, null, 2), 'utf-8');
-  } catch (err) {
-    // Non-fatal
-  }
+  } catch {}
 
   return seed;
 }
 
-export function saveStoreData(data: AppData): void {
+/**
+ * Primary asynchronous store saver:
+ * 1. Persists to Upstash Redis if configured
+ * 2. Writes to /tmp and local seed file
+ * 3. Updates in-memory cache
+ */
+export async function saveStoreData(data: AppData): Promise<void> {
   memoryCache = data;
 
-  // 1. Write to /tmp
+  // 1. Write to Redis if configured
+  if (isRedisConfigured()) {
+    try {
+      await saveRedisStoreData(data);
+    } catch (err) {
+      console.error('Error saving store data to Redis:', err);
+    }
+  }
+
+  // 2. Write to /tmp
   try {
     fs.writeFileSync(TMP_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error writing to /tmp/tetra_store.json:', err);
   }
 
-  // 2. Also try writing to local project file (in dev or when possible)
+  // 3. Write to local project seed when possible (in local dev)
   try {
     const dir = path.dirname(LOCAL_SEED_PATH);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(LOCAL_SEED_PATH, JSON.stringify(data, null, 2), 'utf-8');
-  } catch (err) {
-    // Expected in read-only production environments like Vercel Lambda
-  }
+  } catch {}
 }
 
-export function getCustomerByMobile(mobile: string): Customer | undefined {
+export async function getCustomerByMobile(mobile: string): Promise<Customer | undefined> {
   const clean = mobile.replace(/\D/g, '');
-  const data = getStoreData();
+  const data = await getStoreData();
   return data.customers.find((c) => {
     const cClean = c.mobile.replace(/\D/g, '');
     if (cClean === clean) return true;
@@ -186,12 +259,12 @@ export interface EligibilityResult {
  * - TV Login: Maximum 2 times per calendar month (resets on 1st of each month).
  * - Household Update: NO LIMIT — customers can use it as many times as they want.
  */
-export function checkCustomerEligibility(
+export async function checkCustomerEligibility(
   mobile: string,
   action: 'tv_login' | 'household_update' = 'tv_login'
-): EligibilityResult {
-  const customer = getCustomerByMobile(mobile);
-  const data = getStoreData();
+): Promise<EligibilityResult> {
+  const customer = await getCustomerByMobile(mobile);
+  const data = await getStoreData();
   const settings = data.settings;
   const maxMonthly = settings.maxUpdatesPerMonth ?? 2;
 
@@ -280,7 +353,7 @@ export function checkCustomerEligibility(
 /**
  * Records a successful update or login attempt, updating counter and timestamp.
  */
-export function recordCustomerAttempt(
+export async function recordCustomerAttempt(
   mobile: string,
   action: 'tv_login' | 'household_update',
   options: {
@@ -289,8 +362,8 @@ export function recordCustomerAttempt(
     accountUsed?: string;
     notes?: string;
   } = {}
-): Customer | null {
-  const data = getStoreData();
+): Promise<Customer | null> {
+  const data = await getStoreData();
   const cleanMobile = mobile.replace(/\D/g, '');
   const customer = data.customers.find((c) => c.mobile.replace(/\D/g, '') === cleanMobile);
 
@@ -332,35 +405,38 @@ export function recordCustomerAttempt(
     data.activationsLog = data.activationsLog.slice(0, 500);
   }
 
-  saveStoreData(data);
+  await saveStoreData(data);
   return customer;
 }
 
 /**
  * Resets counter / cooldown for a customer (admin action).
  */
-export function resetCustomerCooldown(customerId: string): boolean {
-  const data = getStoreData();
+export async function resetCustomerCooldown(customerId: string): Promise<boolean> {
+  const data = await getStoreData();
   const customer = data.customers.find((c) => c.id === customerId);
   if (!customer) return false;
 
   customer.lastUpdateAt = null;
   customer.updatedAt = new Date().toISOString();
-  saveStoreData(data);
+  await saveStoreData(data);
   return true;
 }
 
 /**
  * Assigns a specific Netflix account to a customer.
  */
-export function assignAccountToCustomer(customerId: string, accountId: string | null): boolean {
-  const data = getStoreData();
+export async function assignAccountToCustomer(
+  customerId: string,
+  accountId: string | null
+): Promise<boolean> {
+  const data = await getStoreData();
   const customer = data.customers.find((c) => c.id === customerId);
   if (!customer) return false;
 
   customer.assignedAccountId = accountId;
   customer.updatedAt = new Date().toISOString();
-  saveStoreData(data);
+  await saveStoreData(data);
   return true;
 }
 
@@ -369,8 +445,8 @@ export function assignAccountToCustomer(customerId: string, accountId: string | 
  * For customers with no account assigned, picks one at random from the
  * available working accounts in the vault and permanently links it to them.
  */
-export function getAssignedNetflixAccount(customer: Customer): NetflixAccount | null {
-  const data = getStoreData();
+export async function getAssignedNetflixAccount(customer: Customer): Promise<NetflixAccount | null> {
+  const data = await getStoreData();
   const pool = data.netflixCookies || [];
 
   if (pool.length === 0) return null;
@@ -378,14 +454,18 @@ export function getAssignedNetflixAccount(customer: Customer): NetflixAccount | 
   // 1. If customer already has a linked account and it's active
   if (customer.assignedAccountId) {
     const assigned = pool.find((a) => a.id === customer.assignedAccountId);
-    if (assigned && assigned.status !== 'expired') {
+    if (assigned && assigned.status !== 'expired' && assigned.status !== 'needs_reimport') {
       return assigned;
     }
   }
 
   // 2. Pick one at random from available working accounts in the vault
   const workingAccounts = pool.filter(
-    (a) => a.status !== 'expired' && a.lastResult !== 'expired'
+    (a) =>
+      a.status !== 'expired' &&
+      a.status !== 'needs_reimport' &&
+      a.lastResult !== 'expired' &&
+      a.lastResult !== 'needs_reimport'
   );
   const candidates = workingAccounts.length > 0 ? workingAccounts : pool;
 
@@ -396,7 +476,7 @@ export function getAssignedNetflixAccount(customer: Customer): NetflixAccount | 
     // Permanently link this account to the customer
     customer.assignedAccountId = chosen.id;
     customer.updatedAt = new Date().toISOString();
-    saveStoreData(data);
+    await saveStoreData(data);
     return chosen;
   }
 
