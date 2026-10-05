@@ -5,7 +5,7 @@ import { calculateExpiryDate } from '@/lib/validity';
 
 export async function POST(request: NextRequest) {
   if (!verifyAdminRequest(request)) {
-    return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ ok: false, message: 'Unauthorized access' }, { status: 401 });
   }
 
   try {
@@ -23,19 +23,19 @@ export async function POST(request: NextRequest) {
 
     for (const r of rows) {
       const cleanMobile = (r.mobile || '').replace(/\D/g, '');
-      if (!/^[6-9]\d{9}$/.test(cleanMobile)) continue;
+      if (cleanMobile.length < 8 || cleanMobile.length > 15) continue;
 
       const subDate = r.subscriptionDate || new Date().toISOString().slice(0, 10);
       const validity = r.validity || '1 Month';
       const expDate = r.expiryDate || calculateExpiryDate(subDate, validity);
-      const service = r.service || 'Netflix';
+      const service = r.service || 'Netflix 4K';
 
       const existingIndex = data.customers.findIndex(
         (c) => c.mobile.replace(/\D/g, '') === cleanMobile
       );
 
       if (existingIndex !== -1) {
-        // Update existing
+        // Update existing customer record
         data.customers[existingIndex].subscriptionDate = subDate;
         data.customers[existingIndex].validity = validity;
         data.customers[existingIndex].expiryDate = expDate;
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
         data.customers[existingIndex].updatedAt = nowIso;
         updatedCount++;
       } else {
-        // Add new
+        // Add new customer
         const newCust: Customer = {
           id: 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
           mobile: cleanMobile,
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
           createdAt: nowIso,
           updatedAt: nowIso,
         };
-        data.customers.unshift(newCust);
+        data.customers.push(newCust);
         importedCount++;
       }
     }
@@ -68,9 +68,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      message: `Successfully processed: ${importedCount} added, ${updatedCount} updated.`,
+      message: `Successfully imported ${importedCount} new customers and updated ${updatedCount} existing records.`,
       importedCount,
       updatedCount,
+      totalCustomers: data.customers.length,
     });
   } catch (err: any) {
     return NextResponse.json({ ok: false, message: err.message }, { status: 500 });

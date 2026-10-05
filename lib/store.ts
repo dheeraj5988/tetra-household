@@ -158,9 +158,15 @@ export function saveStoreData(data: AppData): void {
 }
 
 export function getCustomerByMobile(mobile: string): Customer | undefined {
-  const cleanMobile = mobile.replace(/\D/g, '');
+  const clean = mobile.replace(/\D/g, '');
   const data = getStoreData();
-  return data.customers.find((c) => c.mobile.replace(/\D/g, '') === cleanMobile);
+  return data.customers.find((c) => {
+    const cClean = c.mobile.replace(/\D/g, '');
+    if (cClean === clean) return true;
+    if (clean.length === 10 && (cClean === '91' + clean || cClean.endsWith(clean))) return true;
+    if (cClean.length === 10 && (clean === '91' + cClean || clean.endsWith(cClean))) return true;
+    return false;
+  });
 }
 
 export interface EligibilityResult {

@@ -127,18 +127,23 @@ export interface ParsedRow {
 }
 
 /**
- * Parses lines pasted from spreadsheets, e.g.:
- * 01/06/2026 9876543210 1 Month
- * 9876543210  2026-06-01  1 Month
- * Mobile, Date, Validity, Expiry
+ * Parses lines pasted from spreadsheets or uploaded CSV files.
+ * Handles headers, UTF-8 BOM, tab-separated, comma-separated, and space-separated lines.
  */
 export function parseBulkSubscribers(text: string): ParsedRow[] {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // Remove BOM if present
+  const cleanText = text.replace(/^\uFEFF/, '');
+  const lines = cleanText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const rows: ParsedRow[] = [];
 
   for (const line of lines) {
-    // If it's a CSV or tab-delimited
-    const tokens = line.split(/[,\t]+/).map((t) => t.trim()).filter(Boolean);
+    // Skip header line if detected
+    if (/^(mobile|phone|number|subscriber|date|validity)/i.test(line)) {
+      continue;
+    }
+
+    // Split by comma or tab or semicolon
+    let tokens = line.split(/[,\t;]+/).map((t) => t.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
 
     let mobile = '';
     let subDate = '';
@@ -148,7 +153,8 @@ export function parseBulkSubscribers(text: string): ParsedRow[] {
     if (tokens.length >= 2) {
       for (const t of tokens) {
         const cleanDigits = t.replace(/\D/g, '');
-        if (/^[6-9]\d{9}$/.test(cleanDigits)) {
+        // Phone number detection (8 to 15 digits)
+        if (cleanDigits.length >= 8 && cleanDigits.length <= 15 && !mobile) {
           mobile = cleanDigits;
         } else if (/^\d{4}-\d{2}-\d{2}$/.test(t) || /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(t)) {
           if (!subDate) {
@@ -166,7 +172,7 @@ export function parseBulkSubscribers(text: string): ParsedRow[] {
       for (let i = 0; i < spaceTokens.length; i++) {
         const t = spaceTokens[i];
         const cleanDigits = t.replace(/\D/g, '');
-        if (/^[6-9]\d{9}$/.test(cleanDigits)) {
+        if (cleanDigits.length >= 8 && cleanDigits.length <= 15 && !mobile) {
           mobile = cleanDigits;
         } else if (/^\d{4}-\d{2}-\d{2}$/.test(t) || /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(t)) {
           if (!subDate) {
@@ -208,6 +214,11 @@ function normalizeToIso(dStr: string): string {
     if (parts.length === 3) {
       if (parts[2] > 1000) {
         const y = parts[2];
+        const m = String(parts[1]).padStart(2, '0');
+        const d = String(parts[0]).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      } else {
+        const y = parts[2] < 100 ? 2000 + parts[2] : parts[2];
         const m = String(parts[1]).padStart(2, '0');
         const d = String(parts[0]).padStart(2, '0');
         return `${y}-${m}-${d}`;
