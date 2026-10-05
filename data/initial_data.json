@@ -1,0 +1,179 @@
+{
+  "customers": [
+    {
+      "id": "c1",
+      "mobile": "9876543210",
+      "service": "Netflix 4K Ultra",
+      "subscriptionDate": "2026-10-01",
+      "validity": "1 Year",
+      "expiryDate": "2027-10-01",
+      "assignedAccountId": "netflix-acc-1",
+      "isBlocked": false,
+      "totalUpdates": 2,
+      "lastUpdateAt": null,
+      "history": [
+        {
+          "id": "h-1791205966167-kv6y",
+          "date": "2026-10-05T13:12:46.167Z",
+          "action": "tv_login",
+          "code": "TEST5678",
+          "status": "success"
+        },
+        {
+          "id": "h-1791205966116-fouf",
+          "date": "2026-10-05T13:12:46.116Z",
+          "action": "tv_login",
+          "code": "TEST1234",
+          "status": "success"
+        }
+      ],
+      "createdAt": "2026-10-01T00:00:00.000Z",
+      "updatedAt": "2026-10-05T13:12:46.168Z"
+    },
+    {
+      "id": "c2",
+      "mobile": "9748521263",
+      "service": "Netflix",
+      "subscriptionDate": "2026-06-07",
+      "validity": "6 Months",
+      "expiryDate": "2026-12-07",
+      "assignedAccountId": "netflix-acc-1",
+      "isBlocked": false,
+      "totalUpdates": 1,
+      "lastUpdateAt": "2026-09-15T12:00:00.000Z",
+      "history": [
+        {
+          "id": "h-sample-1",
+          "date": "2026-09-15T12:00:00.000Z",
+          "action": "household_update",
+          "status": "success",
+          "notes": "Device update link fetched"
+        }
+      ],
+      "createdAt": "2026-06-07T00:00:00.000Z",
+      "updatedAt": "2026-09-15T12:00:00.000Z"
+    },
+    {
+      "id": "c3",
+      "mobile": "9669120252",
+      "service": "Netflix",
+      "subscriptionDate": "2026-09-10",
+      "validity": "3 Months",
+      "expiryDate": "2026-12-10",
+      "assignedAccountId": "netflix-acc-1",
+      "isBlocked": false,
+      "totalUpdates": 0,
+      "lastUpdateAt": null,
+      "history": [],
+      "createdAt": "2026-09-10T00:00:00.000Z",
+      "updatedAt": "2026-09-10T00:00:00.000Z"
+    },
+    {
+      "id": "c4",
+      "mobile": "9990644429",
+      "service": "Netflix",
+      "subscriptionDate": "2026-06-23",
+      "validity": "1 Year",
+      "expiryDate": "2027-06-23",
+      "assignedAccountId": "netflix-acc-1",
+      "isBlocked": false,
+      "totalUpdates": 0,
+      "lastUpdateAt": null,
+      "history": [],
+      "createdAt": "2026-06-23T00:00:00.000Z",
+      "updatedAt": "2026-06-23T00:00:00.000Z"
+    },
+    {
+      "id": "c5",
+      "mobile": "9493753403",
+      "service": "Netflix Premium",
+      "subscriptionDate": "2026-09-20",
+      "validity": "2 Months",
+      "expiryDate": "2026-11-20",
+      "assignedAccountId": "netflix-acc-1",
+      "isBlocked": false,
+      "totalUpdates": 0,
+      "lastUpdateAt": null,
+      "history": [],
+      "createdAt": "2026-09-20T00:00:00.000Z",
+      "updatedAt": "2026-09-20T00:00:00.000Z"
+    },
+    {
+      "id": "c6",
+      "mobile": "7004089223",
+      "service": "Netflix",
+      "subscriptionDate": "2026-09-25",
+      "validity": "1 Month",
+      "expiryDate": "2026-10-25",
+      "assignedAccountId": "netflix-acc-1",
+      "isBlocked": false,
+      "totalUpdates": 0,
+      "lastUpdateAt": null,
+      "history": [],
+      "createdAt": "2026-09-25T00:00:00.000Z",
+      "updatedAt": "2026-09-25T00:00:00.000Z"
+    }
+  ],
+  "netflixCookies": [
+    {
+      "id": "netflix-acc-1",
+      "profileName": "Netflix Account 1",
+      "accountLabel": "Netflix Premium (Main)",
+      "accountEmail": "netflix.admin@tetra.digital",
+      "cookies": [
+        {
+          "name": "NetflixId",
+          "value": "v%3D2%26ct%3DBQAOAAEBENf1z5n4...sample",
+          "domain": ".netflix.com",
+          "path": "/",
+          "expirationDate": 1850000000,
+          "secure": true,
+          "httpOnly": true
+        },
+        {
+          "name": "SecureNetflixId",
+          "value": "v%3D2%26mac%3DAQEAEQABAB...sample",
+          "domain": ".netflix.com",
+          "path": "/",
+          "expirationDate": 1850000000,
+          "secure": true,
+          "httpOnly": true
+        }
+      ],
+      "status": "active",
+      "lastCheckedAt": "2026-10-05T12:00:00.000Z",
+      "lastResult": "working",
+      "lastDetail": "Configured and active in pool",
+      "createdAt": "2026-10-01T00:00:00.000Z",
+      "updatedAt": "2026-10-05T12:00:00.000Z"
+    }
+  ],
+  "settings": {
+    "adminPassword": "6Ce0hegpwr8.",
+    "companyName": "Tetra Digital Services",
+    "supportWhatsapp": "919772880079",
+    "maxUpdatesPerMonth": 2,
+    "cooldownDays": 15,
+    "logRetentionDays": 90
+  },
+  "activationsLog": [
+    {
+      "id": "act-1791205966167",
+      "mobile": "9876543210",
+      "action": "tv_login",
+      "code": "TEST5678",
+      "ip": "unknown",
+      "status": "success",
+      "timestamp": "2026-10-05T13:12:46.167Z"
+    },
+    {
+      "id": "act-1791205966116",
+      "mobile": "9876543210",
+      "action": "tv_login",
+      "code": "TEST1234",
+      "ip": "unknown",
+      "status": "success",
+      "timestamp": "2026-10-05T13:12:46.116Z"
+    }
+  ]
+}
