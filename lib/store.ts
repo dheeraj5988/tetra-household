@@ -182,7 +182,9 @@ export interface EligibilityResult {
 
 /**
  * Checks if user is eligible to update household or login to TV.
- * Rule: Access is limited to 2 times a month, and every 15 days they can use 1 attempt.
+ * Rule:
+ * - TV Login: Maximum 2 times per calendar month (resets on 1st of each month).
+ * - Household Update: NO LIMIT — customers can use it as many times as they want.
  */
 export function checkCustomerEligibility(
   mobile: string,
@@ -192,13 +194,12 @@ export function checkCustomerEligibility(
   const data = getStoreData();
   const settings = data.settings;
   const maxMonthly = settings.maxUpdatesPerMonth ?? 2;
-  const cooldownDays = settings.cooldownDays ?? 15;
 
   if (!customer) {
     return {
       eligible: false,
       reason: 'not_found',
-      message: 'No active Netflix subscription found for this mobile number. Please contact admin.',
+      message: 'No active Netflix subscription found for this mobile number. Please check your number or contact support on WhatsApp.',
       currentCount: 0,
       maxCount: maxMonthly,
     };
@@ -230,67 +231,46 @@ export function checkCustomerEligibility(
     };
   }
 
-  // 3. Count attempts in the last 30 days
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const recentHistory = (customer.history || []).filter(
-    (h) => h.status === 'success' && new Date(h.date) >= thirtyDaysAgo
-  );
-  const monthCount = recentHistory.length;
-
-  // 4. Check 15 days interval since last attempt
-  if (customer.lastUpdateAt) {
-    const lastDate = new Date(customer.lastUpdateAt);
-    const msSinceLast = now.getTime() - lastDate.getTime();
-    const daysSinceLast = msSinceLast / (24 * 60 * 60 * 1000);
-
-    if (daysSinceLast < cooldownDays) {
-      const daysLeft = Math.ceil(cooldownDays - daysSinceLast);
-      const nextDate = new Date(lastDate.getTime() + cooldownDays * 24 * 60 * 60 * 1000);
-      const formattedNextDate = nextDate.toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      });
-
-      return {
-        eligible: false,
-        reason: 'cooldown',
-        daysRemaining: daysLeft,
-        nextAllowedDate: formattedNextDate,
-        currentCount: monthCount,
-        maxCount: maxMonthly,
-        customer,
-        message: `Cooldown active: Only 1 attempt is allowed every ${cooldownDays} days to prevent multiple device login. Next attempt available in ${daysLeft} day${daysLeft > 1 ? 's' : ''} on ${formattedNextDate}.`,
-      };
-    }
+  // 3. HOUSEHOLD UPDATE has NO LIMIT - unlimited updates allowed
+  if (action === 'household_update') {
+    return {
+      eligible: true,
+      message: 'Eligible for household update',
+      customer,
+      currentCount: 0,
+      maxCount: 999,
+    };
   }
 
-  // 5. Check monthly limit (2 times per month)
-  if (monthCount >= maxMonthly) {
-    const oldest = recentHistory[0];
-    const dropsOffDate = oldest
-      ? new Date(new Date(oldest.date).getTime() + 30 * 24 * 60 * 60 * 1000)
-      : new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
-    const formattedDate = dropsOffDate.toLocaleDateString('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    });
+  // 4. TV LOGIN: Maximum 2 times per calendar month (resets at the start of each month)
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth(); // 0-indexed
 
+  const calendarMonthLogins = (customer.history || []).filter((h) => {
+    if (h.action !== 'tv_login' || h.status !== 'success') return false;
+    const d = new Date(h.date);
+    return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+  });
+
+  const monthCount = calendarMonthLogins.length;
+
+  if (monthCount >= maxMonthly) {
+    const nextMonth = new Date(currentYear, currentMonth + 1, 1);
+    const nextMonthName = nextMonth.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
     return {
       eligible: false,
       reason: 'monthly_limit',
       currentCount: monthCount,
       maxCount: maxMonthly,
-      nextAllowedDate: formattedDate,
+      nextAllowedDate: `1st ${nextMonthName}`,
       customer,
-      message: `Monthly limit reached: You have used ${monthCount}/${maxMonthly} attempts in the last 30 days. Next attempt will unlock on ${formattedDate}.`,
+      message: `Monthly TV login limit reached: You have completed ${monthCount}/${maxMonthly} TV logins for this calendar month. Your limit will reset on 1st ${nextMonthName}.`,
     };
   }
 
   return {
     eligible: true,
-    message: 'User is eligible',
+    message: 'User is eligible for TV login',
     customer,
     currentCount: monthCount,
     maxCount: maxMonthly,
@@ -385,7 +365,9 @@ export function assignAccountToCustomer(customerId: string, accountId: string | 
 }
 
 /**
- * Gets the best healthy Netflix account for a customer.
+ * Gets or links the assigned Netflix account for a customer.
+ * For customers with no account assigned, picks one at random from the
+ * available working accounts in the vault and permanently links it to them.
  */
 export function getAssignedNetflixAccount(customer: Customer): NetflixAccount | null {
   const data = getStoreData();
@@ -393,7 +375,7 @@ export function getAssignedNetflixAccount(customer: Customer): NetflixAccount | 
 
   if (pool.length === 0) return null;
 
-  // 1. If customer has a specific assigned account and it's active
+  // 1. If customer already has a linked account and it's active
   if (customer.assignedAccountId) {
     const assigned = pool.find((a) => a.id === customer.assignedAccountId);
     if (assigned && assigned.status !== 'expired') {
@@ -401,12 +383,22 @@ export function getAssignedNetflixAccount(customer: Customer): NetflixAccount | 
     }
   }
 
-  // 2. Fallback: return least loaded active account
-  const activePool = pool.filter((a) => a.status !== 'expired');
-  if (activePool.length > 0) {
-    return activePool[0];
+  // 2. Pick one at random from available working accounts in the vault
+  const workingAccounts = pool.filter(
+    (a) => a.status !== 'expired' && a.lastResult !== 'expired'
+  );
+  const candidates = workingAccounts.length > 0 ? workingAccounts : pool;
+
+  const randomIndex = Math.floor(Math.random() * candidates.length);
+  const chosen = candidates[randomIndex];
+
+  if (chosen) {
+    // Permanently link this account to the customer
+    customer.assignedAccountId = chosen.id;
+    customer.updatedAt = new Date().toISOString();
+    saveStoreData(data);
+    return chosen;
   }
 
-  // 3. Fallback to first available account
   return pool[0] || null;
 }
