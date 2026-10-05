@@ -56,23 +56,97 @@ export function getSupabaseClient(): SupabaseClient | null {
 /**
  * Tests whether Supabase tables exist and can be queried.
  */
-export async function testSupabaseConnection(): Promise<{ ok: boolean; message: string; tablesExist: boolean }> {
+export async function testSupabaseConnection(): Promise<{
+  ok: boolean;
+  message: string;
+  tablesExist: boolean;
+  canWrite: boolean;
+}> {
   const client = getSupabaseClient();
   if (!client) {
-    return { ok: false, message: 'SUPABASE_URL or API key not configured in environment', tablesExist: false };
+    return {
+      ok: false,
+      message: 'SUPABASE_URL or API key not configured in environment',
+      tablesExist: false,
+      canWrite: false,
+    };
   }
 
   try {
-    const { error } = await client.from('cookie_pool').select('id').limit(1);
-    if (error) {
-      if (error.code === '42P01' || error.message.includes('relation "public.cookie_pool" does not exist')) {
-        return { ok: false, message: 'Supabase connected, but tables do not exist yet. Please run the SQL schema.', tablesExist: false };
+    // 1. Check read on cookie_pool
+    const { error: readErr } = await client.from('cookie_pool').select('id').limit(1);
+    if (readErr) {
+      if (readErr.code === '42P01' || readErr.message.includes('does not exist')) {
+        return {
+          ok: false,
+          message: 'Supabase tables do not exist yet. Please run the SQL schema.',
+          tablesExist: false,
+          canWrite: false,
+        };
       }
-      return { ok: false, message: `Supabase error: ${error.message}`, tablesExist: false };
+      return {
+        ok: false,
+        message: `Supabase read error: ${readErr.message}`,
+        tablesExist: false,
+        canWrite: false,
+      };
     }
-    return { ok: true, message: 'Supabase tables exist and connected', tablesExist: true };
+
+    // 2. Check write permission (RLS check) on cookie_pool
+    const probeId = '00000000-0000-0000-0000-000000000000';
+    const { error: writeErr } = await client.from('cookie_pool').upsert(
+      {
+        id: probeId,
+        platform: 'probe',
+        profile_name: '__health_probe__',
+        cookies: [],
+        status: 'unknown',
+      },
+      { onConflict: 'id' }
+    );
+
+    if (writeErr) {
+      if (writeErr.code === '42501' || writeErr.message.includes('row-level security')) {
+        return {
+          ok: false,
+          message:
+            'Writes blocked by Row Level Security (RLS). Add SUPABASE_SERVICE_ROLE_KEY in Vercel or run RLS policies.',
+          tablesExist: true,
+          canWrite: false,
+        };
+      }
+      if (writeErr.message.includes('user_agent') || writeErr.code === '42703') {
+        return {
+          ok: false,
+          message: 'Table missing required columns. Please run the SQL update in Supabase.',
+          tablesExist: true,
+          canWrite: false,
+        };
+      }
+      return {
+        ok: false,
+        message: `Supabase write error: ${writeErr.message}`,
+        tablesExist: true,
+        canWrite: false,
+      };
+    }
+
+    // Clean up probe row
+    await client.from('cookie_pool').delete().eq('id', probeId);
+
+    return {
+      ok: true,
+      message: 'Supabase connected with persistent read/write access',
+      tablesExist: true,
+      canWrite: true,
+    };
   } catch (err: any) {
-    return { ok: false, message: err.message || 'Connection test failed', tablesExist: false };
+    return {
+      ok: false,
+      message: err.message || 'Connection test failed',
+      tablesExist: false,
+      canWrite: false,
+    };
   }
 }
 

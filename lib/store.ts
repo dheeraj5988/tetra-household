@@ -275,7 +275,7 @@ export async function getActiveStorageStatus(): Promise<{
 }> {
   if (isSupabaseConfigured()) {
     const test = await testSupabaseConnection();
-    if (test.tablesExist) {
+    if (test.ok && test.canWrite) {
       return {
         provider: 'supabase',
         label: 'Supabase (persistent)',
@@ -285,7 +285,7 @@ export async function getActiveStorageStatus(): Promise<{
     } else {
       return {
         provider: 'local',
-        label: 'Local/temporary (Supabase tables missing - run SQL)',
+        label: 'Local/temporary',
         isPersistent: false,
         details: test.message,
       };
