@@ -278,7 +278,7 @@ export async function getActiveStorageStatus(): Promise<{
     if (test.ok && test.canWrite) {
       return {
         provider: 'supabase',
-        label: 'Supabase (persistent)',
+        label: 'Supabase (permanent)',
         isPersistent: true,
         details: 'Verified connected to Supabase PostgreSQL database',
       };

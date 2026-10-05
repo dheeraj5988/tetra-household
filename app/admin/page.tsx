@@ -785,7 +785,7 @@ export default function AdminPage() {
               title={storageInfo.details || "Connected to persistent database"}
             >
               <Database className="w-3.5 h-3.5" />
-              <span>{storageInfo.label || "Supabase (persistent)"}</span>
+              <span>{storageInfo.label || "Supabase (permanent)"}</span>
             </div>
           ) : (
             <div
