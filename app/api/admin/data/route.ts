@@ -1,92 +1,93 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getStoreData, saveStoreData, getActiveStorageStatus, AppData } from '@/lib/store';
-import { verifyAdminRequest } from '@/lib/admin-auth';
+import {
+  getStorageStatus,
+  listAccounts,
+  listActivations,
+  listCustomers,
+  listTvLoginsThisMonth,
+  getSettings,
+  importCustomers,
+  indiaToday,
+  indiaMonthStart,
+} from '@/lib/store';
+import { adminRoute } from '@/lib/api-response';
+import { calculateExpiryDate } from '@/lib/validity';
 
-export async function GET(request: NextRequest) {
-  if (!verifyAdminRequest(request)) {
-    return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
+export const GET = adminRoute(async () => {
+  const storage = await getStorageStatus();
+  if (!storage.ok) {
+    return NextResponse.json({ ok: false, storageError: true, message: storage.details, storage }, { status: 503 });
   }
 
-  const data = await getStoreData();
-  const now = new Date();
-  const todayIso = now.toISOString().slice(0, 10);
-  const startOfDayIso = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const startOfMonthIso = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const [customers, accounts, settings, activations, monthLogins] = await Promise.all([
+    listCustomers(),
+    listAccounts(),
+    getSettings(),
+    listActivations(2000),
+    listTvLoginsThisMonth(),
+  ]);
 
-  // Compute metrics
-  const totalSubscribers = data.customers.length;
-  const activeSubscribers = data.customers.filter(
-    (c) => (!c.expiryDate || c.expiryDate >= todayIso) && !c.isBlocked
-  ).length;
-  const expiredSubscribers = data.customers.filter(
-    (c) => c.expiryDate && c.expiryDate < todayIso
-  ).length;
-  const blockedSubscribers = data.customers.filter((c) => c.isBlocked).length;
+  const historyBySubscriber = new Map<string, typeof activations>();
+  for (const a of activations) {
+    if (!a.subscriberId) continue;
+    const list = historyBySubscriber.get(a.subscriberId) || [];
+    list.push(a);
+    historyBySubscriber.set(a.subscriberId, list);
+  }
 
-  const logs = data.activationsLog || [];
-  const activationsToday = logs.filter((l) => l.timestamp >= startOfDayIso).length;
-  const activationsMonth = logs.filter((l) => l.timestamp >= startOfMonthIso).length;
+  const monthStart = indiaMonthStart();
+  const customersOut = customers.map((c) => {
+    const countFrom = c.tvQuotaResetAt && new Date(c.tvQuotaResetAt) > monthStart ? c.tvQuotaResetAt : monthStart.toISOString();
+    const history = historyBySubscriber.get(c.id) || [];
+    return {
+      ...c,
+      tvLoginsThisMonth: monthLogins.filter((l) => l.subscriberId === c.id && l.timestamp >= countFrom).length,
+      totalUpdates: history.filter((h) => h.status === 'success').length,
+      lastUpdateAt: history.find((h) => h.status === 'success')?.timestamp || null,
+      history: history.map((h) => ({
+        id: h.id,
+        date: h.timestamp,
+        action: h.action,
+        status: h.status,
+        code: h.code,
+        notes: h.notes,
+      })),
+    };
+  });
 
-  const cookieAccounts = data.netflixCookies || [];
-  const activeCookies = cookieAccounts.filter(
-    (c) => c.status === 'live' || c.status === 'expiring_soon' || c.lastResult === 'working'
-  ).length;
-
+  const today = indiaToday();
+  const startOfDay = new Date(new Date(`${today}T00:00:00+05:30`).getTime()).toISOString();
   const metrics = {
-    totalSubscribers,
-    activeSubscribers,
-    expiredSubscribers,
-    blockedSubscribers,
-    activationsToday,
-    activationsMonth,
-    totalCookieAccounts: cookieAccounts.length,
-    activeCookies,
+    totalSubscribers: customers.length,
+    activeSubscribers: customers.filter((c) => (!c.expiryDate || c.expiryDate >= today) && !c.isBlocked).length,
+    expiredSubscribers: customers.filter((c) => c.expiryDate && c.expiryDate < today).length,
+    blockedSubscribers: customers.filter((c) => c.isBlocked).length,
+    activationsToday: activations.filter((a) => a.status === 'success' && a.timestamp >= startOfDay).length,
+    activationsMonth: activations.filter((a) => a.status === 'success' && a.timestamp >= monthStart.toISOString()).length,
+    totalCookieAccounts: accounts.length,
+    activeCookies: accounts.filter((a) => a.status === 'live' || a.status === 'expiring_soon').length,
   };
-
-  const storageStatus = await getActiveStorageStatus();
 
   return NextResponse.json({
     ok: true,
-    storage: {
-      provider: storageStatus.provider,
-      label: storageStatus.label,
-      isPersistent: storageStatus.isPersistent,
-      details: storageStatus.details,
-    },
-    data: {
-      customers: data.customers,
-      netflixCookies: data.netflixCookies,
-      settings: data.settings,
-      activationsLog: data.activationsLog,
-      metrics,
-    },
+    storage,
+    data: { customers: customersOut, netflixCookies: accounts, settings, activationsLog: activations, metrics },
   });
-}
+});
 
-export async function POST(request: NextRequest) {
-  if (!verifyAdminRequest(request)) {
-    return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
+/**
+ * Restore from a backup file. Customers are merged by mobile number
+ * (no duplicates); nothing is deleted.
+ */
+export const POST = adminRoute(async (request: NextRequest) => {
+  const body = await request.json().catch(() => ({}));
+  const rows = body?.restoreData?.customers;
+  if (!Array.isArray(rows)) {
+    return NextResponse.json({ ok: false, message: 'Invalid backup format' }, { status: 400 });
   }
-
-  try {
-    const body = await request.json();
-    const { restoreData } = body;
-
-    if (!restoreData || !Array.isArray(restoreData.customers)) {
-      return NextResponse.json({ ok: false, message: 'Invalid backup format' }, { status: 400 });
-    }
-
-    const current = await getStoreData();
-    const updated: AppData = {
-      customers: restoreData.customers || current.customers,
-      netflixCookies: restoreData.netflixCookies || current.netflixCookies,
-      settings: { ...current.settings, ...(restoreData.settings || {}) },
-      activationsLog: restoreData.activationsLog || current.activationsLog,
-    };
-
-    await saveStoreData(updated);
-    return NextResponse.json({ ok: true, message: 'Database synced successfully' });
-  } catch (error: any) {
-    return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
-  }
-}
+  const result = await importCustomers(rows, calculateExpiryDate);
+  return NextResponse.json({
+    ok: true,
+    message: `Restored customers: ${result.imported} added, ${result.updated} updated.`,
+  });
+});

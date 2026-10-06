@@ -1,77 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkCustomerEligibility, getCustomerByMobile } from '@/lib/store';
-
-const WHATSAPP_NUMBER = '919772880079';
-
-function createWhatsAppLink(mobile: string, issue: string): string {
-  const msg = `Hi Tetra Digital Services, I need help with Netflix verification for mobile number: ${mobile || 'N/A'}.\nIssue: ${issue}`;
-  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
-}
+import { checkCustomerEligibility, normalizeMobile } from '@/lib/store';
+import { describeError, whatsappLink } from '@/lib/api-response';
 
 export async function POST(request: NextRequest) {
-  let cleanMobile = '';
+  const body = await request.json().catch(() => ({}));
+  const raw = String(body?.mobile || '').replace(/\D/g, '');
+  const action = body?.action === 'household_update' ? 'household_update' : 'tv_login';
+  const mobile = normalizeMobile(raw);
+
+  if (!mobile) {
+    const message = 'Please enter a valid 10-digit mobile number';
+    return NextResponse.json({ eligible: false, message, whatsappUrl: whatsappLink(raw, message) }, { status: 400 });
+  }
+
   try {
-    const body = await request.json();
-    const { mobile, action = 'tv_login' } = body;
-
-    cleanMobile = (mobile || '').replace(/\D/g, '');
-    if (cleanMobile.length < 10) {
-      const msg = 'Please enter a valid 10-digit mobile number';
-      return NextResponse.json(
-        {
-          eligible: false,
-          message: msg,
-          whatsappUrl: createWhatsAppLink(cleanMobile, msg),
-        },
-        { status: 400 }
-      );
-    }
-
-    const result = await checkCustomerEligibility(cleanMobile, action);
-
-    if (!result.eligible) {
-      return NextResponse.json({
-        eligible: false,
-        reason: result.reason,
-        message: result.message,
-        daysRemaining: result.daysRemaining,
-        nextAllowedDate: result.nextAllowedDate,
-        currentCount: result.currentCount,
-        maxCount: result.maxCount,
-        whatsappUrl: createWhatsAppLink(cleanMobile, result.message),
-        customer: result.customer
-          ? {
-              mobile: result.customer.mobile,
-              service: result.customer.service,
-              expiryDate: result.customer.expiryDate,
-            }
-          : undefined,
-      });
-    }
-
+    const r = await checkCustomerEligibility(mobile, action);
     return NextResponse.json({
-      eligible: true,
-      message: 'User is eligible',
-      currentCount: result.currentCount,
-      maxCount: result.maxCount,
-      customer: {
-        mobile: result.customer?.mobile,
-        service: result.customer?.service,
-        expiryDate: result.customer?.expiryDate,
-        subscriptionDate: result.customer?.subscriptionDate,
-        validity: result.customer?.validity,
-      },
+      eligible: r.eligible,
+      reason: r.reason,
+      message: r.message,
+      currentCount: r.currentCount,
+      maxCount: r.maxCount,
+      nextAllowedDate: r.nextAllowedDate,
+      whatsappUrl: r.eligible ? undefined : whatsappLink(mobile, r.message),
+      customer: r.customer
+        ? { mobile: r.customer.mobile, service: r.customer.service, expiryDate: r.customer.expiryDate }
+        : undefined,
     });
-  } catch (error: any) {
-    console.error('Error verifying customer eligibility:', error);
-    const msg = error.message || 'Server error checking customer eligibility';
-    return NextResponse.json(
-      {
-        eligible: false,
-        message: msg,
-        whatsappUrl: createWhatsAppLink(cleanMobile, msg),
-      },
-      { status: 500 }
-    );
+  } catch (err) {
+    const { status, message } = describeError(err);
+    const shown = status === 503 ? 'Service temporarily unavailable. Please contact support on WhatsApp.' : message;
+    return NextResponse.json({ eligible: false, message: shown, whatsappUrl: whatsappLink(mobile, shown) }, { status });
   }
 }

@@ -1,73 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getStoreData, saveStoreData } from '@/lib/store';
-import { verifyAdminRequest } from '@/lib/admin-auth';
-import { runAccountKeepalive } from '@/lib/netflix-keepalive';
+import { NextResponse } from 'next/server';
+import { adminRoute } from '@/lib/api-response';
+import { keepaliveAllAccounts } from '@/lib/keepalive-all';
 
-export async function POST(request: NextRequest) {
-  if (!verifyAdminRequest(request)) {
-    return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
-  }
+export const maxDuration = 60;
 
-  try {
-    const data = await getStoreData();
-    const accounts = data.netflixCookies || [];
-
-    if (accounts.length === 0) {
-      return NextResponse.json({ ok: true, message: 'No accounts in pool', results: [] });
-    }
-
-    const results = [];
-    let workingCount = 0;
-    let renewedCountTotal = 0;
-
-    for (const account of accounts) {
-      try {
-        const report = await runAccountKeepalive(account);
-
-        account.cookies = report.updatedCookies;
-        account.lastCheckedAt = report.checkedAt;
-        if (report.refreshedAt) {
-          account.lastRefreshedAt = report.refreshedAt;
-        }
-        account.lastResult = report.status === 'live' || report.status === 'expiring_soon' ? 'working' : (report.status as any);
-        account.lastDetail = report.detail || report.message;
-        account.status = report.status;
-        if (report.earliestExpiryIso) {
-          account.earliestExpiryIso = report.earliestExpiryIso;
-        }
-        account.updatedAt = new Date().toISOString();
-
-        if (report.ok) workingCount++;
-        renewedCountTotal += report.renewedCount;
-
-        results.push({
-          id: account.id,
-          name: account.accountLabel || account.profileName,
-          status: report.status,
-          message: report.message,
-          renewedCount: report.renewedCount,
-        });
-      } catch (err: any) {
-        results.push({
-          id: account.id,
-          name: account.accountLabel || account.profileName,
-          status: 'error',
-          message: err.message,
-          renewedCount: 0,
-        });
-      }
-    }
-
-    await saveStoreData(data);
-
-    return NextResponse.json({
-      ok: true,
-      total: accounts.length,
-      working: workingCount,
-      renewedTokens: renewedCountTotal,
-      results,
-    });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, message: err.message }, { status: 500 });
-  }
-}
+export const POST = adminRoute(async () => {
+  return NextResponse.json({ ok: true, ...(await keepaliveAllAccounts()) });
+});

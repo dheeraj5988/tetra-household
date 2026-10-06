@@ -1,32 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getStoreData } from '@/lib/store';
-import { issueAdminToken } from '@/lib/admin-auth';
+import { checkAdminPassword, isAdminPasswordConfigured, issueAdminToken } from '@/lib/admin-auth';
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { password } = body;
-
-    const data = await getStoreData();
-    const configuredPassword = data.settings?.adminPassword || '6Ce0hegpwr8.';
-
-    if (password === configuredPassword || password === '6Ce0hegpwr8.') {
-      const token = issueAdminToken();
-      return NextResponse.json({
-        ok: true,
-        token,
-        companyName: data.settings?.companyName || 'Tetra Digital Services',
-      });
-    }
-
+  if (!isAdminPasswordConfigured()) {
     return NextResponse.json(
-      { ok: false, message: 'Invalid admin password' },
-      { status: 401 }
-    );
-  } catch (error: any) {
-    return NextResponse.json(
-      { ok: false, message: error.message || 'Login error' },
-      { status: 500 }
+      { ok: false, message: 'Admin login is disabled: set ADMIN_PASSWORD in the Vercel environment variables.' },
+      { status: 503 }
     );
   }
+
+  const body = await request.json().catch(() => ({}));
+  if (!checkAdminPassword(body?.password)) {
+    return NextResponse.json({ ok: false, message: 'Invalid admin password' }, { status: 401 });
+  }
+  return NextResponse.json({ ok: true, token: issueAdminToken() });
 }

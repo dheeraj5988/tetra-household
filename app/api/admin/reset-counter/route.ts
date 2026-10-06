@@ -1,30 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { resetCustomerCooldown } from '@/lib/store';
-import { verifyAdminRequest } from '@/lib/admin-auth';
+import { resetTvQuota } from '@/lib/store';
+import { adminRoute } from '@/lib/api-response';
 
-export async function POST(request: NextRequest) {
-  if (!verifyAdminRequest(request)) {
-    return NextResponse.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
+export const POST = adminRoute(async (request: NextRequest) => {
+  const { customerId } = await request.json().catch(() => ({}));
+  if (!customerId) return NextResponse.json({ ok: false, message: 'Missing customer ID' }, { status: 400 });
+  if (!(await resetTvQuota(customerId))) {
+    return NextResponse.json({ ok: false, message: 'Customer not found' }, { status: 404 });
   }
-
-  try {
-    const body = await request.json();
-    const { customerId } = body;
-
-    if (!customerId) {
-      return NextResponse.json({ ok: false, message: 'Missing customer ID' }, { status: 400 });
-    }
-
-    const success = await resetCustomerCooldown(customerId);
-    if (!success) {
-      return NextResponse.json({ ok: false, message: 'Customer not found' }, { status: 404 });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      message: 'Cooldown reset. Customer can now make an immediate update / login attempt.',
-    });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, message: err.message }, { status: 500 });
-  }
-}
+  return NextResponse.json({ ok: true, message: 'TV login counter reset. The customer has a full allowance again.' });
+});

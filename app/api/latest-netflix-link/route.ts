@@ -1,14 +1,69 @@
 import { NextRequest, NextResponse } from 'next/server';
 import GmailService from '@/lib/services/gmailService';
 import { extractNetflixLink, isNetflixVerificationEmail } from '@/lib/utils/emailParser';
+import { checkCustomerEligibility, logActivation, normalizeMobile } from '@/lib/store';
+import { clientIp, describeError, whatsappLink } from '@/lib/api-response';
 
 export const maxDuration = 60; // 60 seconds for Vercel serverless functions
 
-export async function GET(request: NextRequest) {
-  try {
-    const searchParams = request.nextUrl.searchParams;
-    const minutesAgo = parseInt(searchParams.get('minutes') || '20', 10);
+/**
+ * Household update: only for a valid, active customer (checked here on the
+ * server). Unlimited uses; each attempt is logged.
+ */
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => ({}));
+  const raw = String(body?.mobile || '').replace(/\D/g, '');
+  const mobile = normalizeMobile(raw);
+  const minutesAgo = Math.min(120, Math.max(5, parseInt(String(body?.minutes || '30'), 10) || 30));
 
+  if (!mobile) {
+    const message = 'Please enter a valid 10-digit mobile number';
+    return NextResponse.json({ success: false, message, whatsappUrl: whatsappLink(raw, message) }, { status: 400 });
+  }
+
+  let eligibility;
+  try {
+    eligibility = await checkCustomerEligibility(mobile, 'household_update');
+  } catch (err) {
+    const { status, message } = describeError(err);
+    const shown = status === 503 ? 'Service temporarily unavailable. Please contact support on WhatsApp.' : message;
+    return NextResponse.json({ success: false, message: shown, whatsappUrl: whatsappLink(mobile, shown) }, { status });
+  }
+  if (!eligibility.eligible || !eligibility.customer) {
+    return NextResponse.json(
+      { success: false, reason: eligibility.reason, message: eligibility.message, whatsappUrl: whatsappLink(mobile, eligibility.message) },
+      { status: 403 }
+    );
+  }
+
+  const customer = eligibility.customer;
+  const ip = clientIp(request);
+  const response = await findLink(minutesAgo);
+  const payload = await response.clone().json().catch(() => ({}));
+
+  try {
+    await logActivation({
+      subscriberId: customer.id,
+      mobile,
+      action: 'household_update',
+      status: payload.success ? 'success' : 'failed',
+      ip,
+      notes: payload.success ? 'Household update link delivered' : String(payload.message || payload.error || 'No link found'),
+    });
+  } catch (err) {
+    // The customer still gets the link; the failed log write is visible in Vercel logs.
+    describeError(err);
+  }
+
+  if (!payload.success) {
+    const message = String(payload.message || payload.error || 'Failed to fetch the Netflix update link');
+    return NextResponse.json({ ...payload, message, whatsappUrl: whatsappLink(mobile, message) }, { status: response.status });
+  }
+  return response;
+}
+
+async function findLink(minutesAgo: number): Promise<NextResponse> {
+  try {
     console.log(`🔍 Searching for Netflix emails from last ${minutesAgo} minutes...`);
 
     const gmailService = new GmailService();
@@ -49,7 +104,6 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('✅ Successfully extracted Netflix verification link');
-    console.log('🔗 Link:', link);
     console.log('🔗 Link contains token:', link.includes('token='));
 
     return NextResponse.json({
