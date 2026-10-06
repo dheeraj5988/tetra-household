@@ -43,3 +43,6 @@ next-env.d.ts
 # sensitive credentials
 google-credentials.json
 **/google-credentials.json
+# local-only data: customer seed and generated SQL containing customer numbers
+*.local.json
+*.local.sql
