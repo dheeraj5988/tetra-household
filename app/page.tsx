@@ -120,7 +120,7 @@ export default function NetflixHouseholdUpdater() {
     setMobileCookie(mobileNumber)
     setIsCookieSaved(true)
     setStatus("loading")
-    setLoadingText("Connecting to Netflix TV activation service...")
+    setLoadingText("Confirming your TV code with Netflix... this can take up to 20 seconds")
     setErrorMessage("")
 
     try {
@@ -296,14 +296,14 @@ export default function NetflixHouseholdUpdater() {
             <div className="space-y-6 animate-fade-in">
               <div className="text-center space-y-3">
                 <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto" />
-                <h3 className="text-2xl font-bold text-white">TV Login Successful!</h3>
+                <h3 className="text-2xl font-bold text-white">TV Signed In!</h3>
                 <p className="text-netflix-gray text-sm">
-                  Your television has been paired with <strong className="text-white">{activatedAccountName}</strong>.
+                  Netflix confirmed your code. Your TV is now signed in to <strong className="text-white">{activatedAccountName}</strong>.
                 </p>
                 {quota && (
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-netflix-dark/80 border border-netflix-border text-xs text-netflix-light">
                     <Clock className="w-3.5 h-3.5 text-netflix-red" />
-                    <span>Attempt {quota.currentCount} of {quota.maxCount} used for this calendar month</span>
+                    <span>TV login {quota.currentCount} of {quota.maxCount} used this calendar month</span>
                   </div>
                 )}
               </div>
@@ -311,13 +311,12 @@ export default function NetflixHouseholdUpdater() {
               {/* Numbered Steps directly on confirmation screen */}
               <div className="bg-netflix-dark/60 border border-netflix-border rounded-xl p-4 text-xs space-y-2">
                 <p className="font-semibold text-white flex items-center gap-1.5 text-xs">
-                  <ShieldCheck className="w-4 h-4 text-green-400" /> Completed Activation Steps:
+                  <ShieldCheck className="w-4 h-4 text-green-400" /> What happens now:
                 </p>
                 <ol className="text-netflix-muted space-y-1.5 list-decimal list-inside leading-relaxed text-[11px]">
-                  <li>TV activation code was transmitted and verified with Netflix.</li>
-                  <li>Assigned account credentials were authenticated.</li>
-                  <li>Device pairing session successfully established.</li>
-                  <li><strong className="text-white">Your TV is ready!</strong> Select your profile and enjoy streaming.</li>
+                  <li>Your TV screen should change within a few seconds.</li>
+                  <li>Choose your profile on the TV and start watching.</li>
+                  <li>If the TV still shows the code after 30 seconds, tap &ldquo;Contact on WhatsApp&rdquo; on the home screen and send us your number.</li>
                 </ol>
               </div>
 

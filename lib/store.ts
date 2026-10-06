@@ -487,6 +487,57 @@ export async function recordTvLogin(mobile: string, code: string, ip: string): P
   };
 }
 
+/**
+ * Finalizes the TV login that recordTvLogin just logged as a success, once
+ * Netflix has answered. A failed confirmation is re-marked as failed so it
+ * does not count toward the monthly limit.
+ */
+export async function finalizeTvLogin(
+  subscriberMobile: string,
+  code: string,
+  ok: boolean,
+  notes: string
+): Promise<void> {
+  const row: any = must(
+    await db()
+      .from('activations')
+      .select('id')
+      .eq('mobile', subscriberMobile)
+      .eq('action', 'tv_login')
+      .eq('status', 'success')
+      .eq('code', code)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    'finding TV login record'
+  );
+  if (!row) return;
+  must(
+    await db()
+      .from('activations')
+      .update({ status: ok ? 'success' : 'failed', notes: notes.slice(0, 500) })
+      .eq('id', row.id),
+    'updating TV login record'
+  );
+}
+
+/** Saves cookies Netflix refreshed during a TV sign-in, and flags a logged-out session. */
+export async function updateAccountAfterTvLogin(
+  accountId: string,
+  cookies: BrowserCookie[],
+  sessionExpired: boolean,
+  detail: string
+): Promise<void> {
+  const patch: Record<string, unknown> = { cookies };
+  if (sessionExpired) {
+    patch.status = 'needs_reimport';
+    patch.last_result = 'needs_reimport';
+    patch.last_detail = detail;
+    patch.last_checked_at = new Date().toISOString();
+  }
+  must(await db().from('cookie_pool').update(patch).eq('id', accountId), 'saving account cookies');
+}
+
 // ---------------------------------------------------------------------------
 // Eligibility (used for household update and for showing quota)
 // ---------------------------------------------------------------------------

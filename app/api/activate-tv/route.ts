@@ -1,6 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { normalizeMobile, recordTvLogin, nextMonthLabel, TvLoginResult } from '@/lib/store';
+import {
+  normalizeMobile,
+  recordTvLogin,
+  nextMonthLabel,
+  TvLoginResult,
+  getAccount,
+  finalizeTvLogin,
+  updateAccountAfterTvLogin,
+} from '@/lib/store';
 import { clientIp, describeError, whatsappLink } from '@/lib/api-response';
+import { confirmTvCode, TvPairResult } from '@/lib/netflix-tv';
+
+export const maxDuration = 45;
+
+function pairFailureMessage(p: TvPairResult): string {
+  switch (p.outcome) {
+    case 'invalid_code':
+      return `Netflix did not accept this code${p.netflixMessage ? ` ("${p.netflixMessage}")` : ''}. Codes expire after a few minutes: get a fresh code on your TV and try again. Your attempt was not counted.`;
+    case 'session_expired':
+      return 'Your linked Netflix account needs to be refreshed by our team. Please contact support on WhatsApp. Your attempt was not counted.';
+    case 'blocked':
+      return 'Netflix could not be reached right now. Please try again in a minute. Your attempt was not counted.';
+    default:
+      return 'Netflix gave an unexpected answer. Please try again with a fresh code, or contact support on WhatsApp. Your attempt was not counted.';
+  }
+}
 
 function failureMessage(r: TvLoginResult): string {
   switch (r.reason) {
@@ -44,11 +68,36 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Quota is reserved; now actually confirm the code on Netflix as the linked account.
+    const account = r.accountId ? await getAccount(r.accountId) : null;
+    if (!account) {
+      await finalizeTvLogin(mobile, code, false, 'Linked account not found');
+      return fail('No Netflix account is available right now. Please contact support on WhatsApp.', 503);
+    }
+
+    const pair = await confirmTvCode(account, code);
+    await updateAccountAfterTvLogin(account.id, pair.cookies, pair.outcome === 'session_expired', pair.detail);
+    await finalizeTvLogin(
+      mobile,
+      code,
+      pair.ok,
+      `${pair.ok ? 'Netflix confirmed' : `Netflix: ${pair.outcome}`} - ${pair.detail}${pair.netflixMessage ? ` - "${pair.netflixMessage}"` : ''}`
+    );
+
+    if (!pair.ok) {
+      console.warn('[tv-login] not confirmed', { account: account.id, outcome: pair.outcome, detail: pair.detail });
+      return fail(pairFailureMessage(pair), 502, {
+        reason: `netflix_${pair.outcome}`,
+        detail: pair.detail,
+        currentCount: Math.max(0, r.used - 1),
+        maxCount: r.max,
+      });
+    }
+
     return NextResponse.json({
       success: true,
-      message: 'TV login recorded',
+      message: 'TV signed in',
       accountName: r.accountLabel || 'Netflix Account',
-      accountEmail: r.accountEmail || null,
       code,
       currentCount: r.used,
       maxCount: r.max,

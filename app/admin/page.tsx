@@ -1398,8 +1398,25 @@ export default function AdminPage() {
                               </span>
                             </td>
                             <td className="py-3 px-4 font-mono">{l.code || "—"}</td>
-                            <td className="py-3 px-4">
-                              <span className="text-green-400 font-medium">Success</span>
+                            <td className="py-3 px-4 max-w-xs">
+                              <span
+                                className={`font-medium ${
+                                  l.status === "success"
+                                    ? "text-green-400"
+                                    : l.status === "rate_limited"
+                                      ? "text-yellow-400"
+                                      : "text-red-400"
+                                }`}
+                              >
+                                {l.status === "success"
+                                  ? "Success"
+                                  : l.status === "rate_limited"
+                                    ? "Limit reached"
+                                    : l.status === "blocked"
+                                      ? "Blocked"
+                                      : "Failed"}
+                              </span>
+                              {l.notes && <p className="text-netflix-muted text-[10px] mt-0.5 break-words">{l.notes}</p>}
                             </td>
                             <td className="py-3 px-4 font-mono text-netflix-muted">{l.ip || "unknown"}</td>
                           </tr>
