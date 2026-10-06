@@ -15,10 +15,10 @@ const API_BASE_URL =
  * @param minutesAgo - Search within last N minutes (default: 30)
  * @returns Promise with API response
  */
-export async function fetchLatestNetflixLink(minutesAgo: number = 30) {
+export async function fetchLatestNetflixLink(mobile: string, minutesAgo: number = 30) {
   try {
     // Use relative URL for same-origin requests (works in Vercel)
-    const url = `/api/latest-netflix-link?minutes=${minutesAgo}`;
+    const url = '/api/latest-netflix-link';
     
     // Debug logging
     console.log('🔗 Fetching from:', url);
@@ -28,15 +28,13 @@ export async function fetchLatestNetflixLink(minutesAgo: number = 30) {
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
     
     const response = await fetch(url, {
-      method: 'GET',
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      // Add mode to handle CORS
-      mode: 'cors',
-      credentials: 'omit',
-      cache: 'no-cache',
+      body: JSON.stringify({ mobile, minutes: minutesAgo }),
+      cache: 'no-store',
       signal: controller.signal,
     });
     

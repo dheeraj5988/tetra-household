@@ -47,6 +47,7 @@ interface Customer {
   isBlocked: boolean
   totalUpdates: number
   lastUpdateAt: string | null
+  tvLoginsThisMonth: number
   history: Array<{
     id: string
     date: string
@@ -64,20 +65,19 @@ interface NetflixAccount {
   accountEmail?: string
   userAgent?: string
   cookies: any[]
-  status: "live" | "expiring_soon" | "expired" | "needs_reimport" | "active" | "unknown"
+  status: "live" | "expiring_soon" | "expired" | "needs_reimport" | "unverified" | "unknown"
   earliestExpiryIso?: string | null
   lastCheckedAt: string | null
   lastRefreshedAt?: string | null
-  lastResult: "working" | "refreshed" | "expired" | "needs_reimport" | "missing_keys" | null
+  lastResult: string | null
   lastDetail: string
 }
 
 interface AppSettings {
-  adminPassword: string
   companyName: string
   supportWhatsapp: string
   maxUpdatesPerMonth: number
-  cooldownDays: number
+  logRetentionDays: number
 }
 
 interface Metrics {
@@ -147,15 +147,19 @@ export default function AdminPage() {
     details?: string
   } | null>(null)
 
+  const [storageError, setStorageError] = useState("")
+
   // Settings state
-  const [newPassword, setNewPassword] = useState("")
-  const [supportWhatsapp, setSupportWhatsapp] = useState("")
   const [maxUpdates, setMaxUpdates] = useState("2")
-  const [cooldownDaysInput, setCooldownDaysInput] = useState("15")
   const [settingsSuccess, setSettingsSuccess] = useState("")
 
   // On mount check token
   useEffect(() => {
+    try {
+      localStorage.removeItem("tetra_admin_backup")
+    } catch {
+      // ignore
+    }
     const savedToken = sessionStorage.getItem("tetra_admin_token")
     if (savedToken) {
       setToken(savedToken)
@@ -202,26 +206,24 @@ export default function AdminPage() {
   }
 
   const getAuthHeaders = () => {
-    const activeToken = token || (typeof window !== "undefined" ? sessionStorage.getItem("tetra_admin_token") : null) || "6Ce0hegpwr8."
+    const activeToken = token || (typeof window !== "undefined" ? sessionStorage.getItem("tetra_admin_token") : null) || ""
     return {
       "Content-Type": "application/json",
       Authorization: `Bearer ${activeToken}`,
-      "x-admin-token": activeToken,
     }
   }
 
   const fetchAdminData = async (adminToken: string) => {
     setLoading(true)
     try {
-      const activeToken = adminToken || (typeof window !== "undefined" ? sessionStorage.getItem("tetra_admin_token") : null) || "6Ce0hegpwr8."
+      const activeToken = adminToken || (typeof window !== "undefined" ? sessionStorage.getItem("tetra_admin_token") : null) || ""
       const res = await fetch("/api/admin/data", {
-        headers: {
-          Authorization: `Bearer ${activeToken}`,
-          "x-admin-token": activeToken,
-        },
+        headers: { Authorization: `Bearer ${activeToken}` },
+        cache: "no-store",
       })
       const data = await res.json()
       if (res.ok && data.ok) {
+        setStorageError("")
         setCustomers(data.data.customers || [])
         setNetflixCookies(data.data.netflixCookies || [])
         setSettings(data.data.settings || null)
@@ -232,71 +234,28 @@ export default function AdminPage() {
         }
 
         if (data.data.settings) {
-          setSupportWhatsapp(data.data.settings.supportWhatsapp || "")
           setMaxUpdates(String(data.data.settings.maxUpdatesPerMonth || 2))
-          setCooldownDaysInput(String(data.data.settings.cooldownDays || 15))
-        }
-
-        // Cache locally for offline backup
-        try {
-          localStorage.setItem("tetra_admin_backup", JSON.stringify(data.data))
-        } catch {
-          // ignore
         }
       } else if (res.status === 401) {
         handleLogout()
+      } else {
+        // Never show stale or empty data as if it were real: surface the storage error.
+        setStorageError(data.message || `Server error (HTTP ${res.status})`)
+        if (data.storage) setStorageInfo(data.storage)
       }
     } catch (err) {
       console.error("Error fetching admin data:", err)
+      setStorageError("Could not reach the server")
     } finally {
       setLoading(false)
     }
   }
 
-  // Check if a customer is currently in cooldown or has reached monthly max
+  // TV logins used this calendar month (counted on the server, India time)
   const getCustomerCooldownInfo = (c: Customer) => {
-    const cooldownDays = settings?.cooldownDays ?? 15
-    const maxMonthly = settings?.maxUpdatesPerMonth ?? 2
-    const now = Date.now()
-
-    // 1. Check cooldown (15 days)
-    if (c.lastUpdateAt) {
-      const msSinceLast = now - new Date(c.lastUpdateAt).getTime()
-      const daysSinceLast = msSinceLast / (24 * 60 * 60 * 1000)
-      if (daysSinceLast < cooldownDays) {
-        const remaining = Math.ceil(cooldownDays - daysSinceLast)
-        const nextDate = new Date(new Date(c.lastUpdateAt).getTime() + cooldownDays * 24 * 60 * 60 * 1000)
-        return {
-          inCooldown: true,
-          daysLeft: remaining,
-          nextAllowedDate: nextDate.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
-          monthUsed: getCustomerRecentCount(c),
-        }
-      }
-    }
-
-    // 2. Check 30 days count
-    const monthUsed = getCustomerRecentCount(c)
-    if (monthUsed >= maxMonthly) {
-      return {
-        isMonthlyMax: true,
-        daysLeft: 0,
-        nextAllowedDate: "Month End",
-        monthUsed,
-      }
-    }
-
-    return {
-      inCooldown: false,
-      daysLeft: 0,
-      nextAllowedDate: "Ready",
-      monthUsed,
-    }
-  }
-
-  const getCustomerRecentCount = (c: Customer) => {
-    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
-    return (c.history || []).filter((h) => h.status === "success" && new Date(h.date).getTime() >= thirtyDaysAgo).length
+    const max = settings?.maxUpdatesPerMonth ?? 2
+    const monthUsed = c.tvLoginsThisMonth || 0
+    return { isMonthlyMax: monthUsed >= max, monthUsed, max }
   }
 
   // Filter customers
@@ -315,7 +274,7 @@ export default function AdminPage() {
 
       if (customerFilter === "active") return !isExpired && !c.isBlocked
       if (customerFilter === "expired") return isExpired
-      if (customerFilter === "cooldown") return cooldownInfo.inCooldown || cooldownInfo.isMonthlyMax
+      if (customerFilter === "cooldown") return cooldownInfo.isMonthlyMax
       if (customerFilter === "blocked") return c.isBlocked
 
       return true
@@ -398,10 +357,7 @@ export default function AdminPage() {
       await fetch("/api/admin/customer", {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({
-          ...c,
-          isBlocked: !c.isBlocked,
-        }),
+        body: JSON.stringify({ id: c.id, isBlocked: !c.isBlocked }),
       })
       if (token) fetchAdminData(token)
     } catch {
@@ -611,22 +567,14 @@ export default function AdminPage() {
       const res = await fetch("/api/admin/settings", {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({
-          adminPassword: newPassword || undefined,
-          supportWhatsapp,
-          maxUpdatesPerMonth: parseInt(maxUpdates, 10),
-          cooldownDays: parseInt(cooldownDaysInput, 10),
-        }),
+        body: JSON.stringify({ maxUpdatesPerMonth: parseInt(maxUpdates, 10) }),
       })
       const data = await res.json()
       if (res.ok && data.ok) {
         setSettingsSuccess("Settings saved successfully!")
-        if (newPassword) {
-          sessionStorage.setItem("tetra_admin_token", newPassword)
-          setToken(newPassword)
-          setNewPassword("")
-        }
         if (token) fetchAdminData(token)
+      } else {
+        alert(data.message || "Failed to save settings")
       }
     } catch {
       alert("Failed to save settings")
@@ -789,11 +737,11 @@ export default function AdminPage() {
             </div>
           ) : (
             <div
-              className="bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm"
-              title={storageInfo?.details || "Running in temporary local container memory"}
+              className="bg-red-500/15 text-red-300 border border-red-500/40 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+              title={storageInfo?.details || storageError || "Storage status unknown"}
             >
               <Database className="w-3.5 h-3.5" />
-              <span>{storageInfo?.label || "Local/temporary"}</span>
+              <span>{storageInfo ? "Storage error" : "Checking storage..."}</span>
             </div>
           )}
 
@@ -826,7 +774,21 @@ export default function AdminPage() {
         {!loading && (
           <>
             {/* 1. DASHBOARD TAB */}
-            {activeTab === "dashboard" && (
+            {storageError && (
+              <div className="mb-4 bg-red-950/50 border border-red-700/60 rounded-xl p-4 text-sm text-red-200 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-red-300">Storage error: data could not be loaded from Supabase</p>
+                  <p className="text-xs text-red-200/80 font-mono break-all">{storageError}</p>
+                  <p className="text-xs text-red-200/70">
+                    Nothing is shown below until the database is reachable, so no data is lost or overwritten. Check the Supabase
+                    environment variables in Vercel and that the migration has been run.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {!storageError && activeTab === "dashboard" && (
               <div className="space-y-6 animate-fade-in">
                 {/* Metrics Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -947,7 +909,7 @@ export default function AdminPage() {
             )}
 
             {/* 2. CUSTOMERS TAB */}
-            {activeTab === "customers" && (
+            {!storageError && activeTab === "customers" && (
               <div className="space-y-4 animate-fade-in">
                 {/* Search & Actions Bar */}
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -971,7 +933,7 @@ export default function AdminPage() {
                             customerFilter === f ? "bg-netflix-red text-white" : "text-netflix-muted hover:text-white"
                           }`}
                         >
-                          {f}
+                          {f === "cooldown" ? "limit reached" : f}
                         </button>
                       ))}
                     </div>
@@ -1075,8 +1037,8 @@ export default function AdminPage() {
                                 <td className="py-3 px-4">
                                   <div className="space-y-1">
                                     <div className="flex items-center gap-1.5 font-mono">
-                                      <span className={cooldown.monthUsed >= 2 ? "text-yellow-400 font-bold" : "text-white"}>
-                                        {cooldown.monthUsed}/2 used
+                                      <span className={cooldown.isMonthlyMax ? "text-yellow-400 font-bold" : "text-white"}>
+                                        {cooldown.monthUsed}/{cooldown.max} TV
                                       </span>
                                       <span className="text-netflix-muted text-[10px]">
                                         (Total: {c.totalUpdates || 0})
@@ -1084,8 +1046,8 @@ export default function AdminPage() {
                                     </div>
                                     <div className="w-16 h-1.5 bg-netflix-dark rounded-full overflow-hidden">
                                       <div
-                                        className={`h-full ${cooldown.monthUsed >= 2 ? "bg-yellow-500" : "bg-netflix-red"}`}
-                                        style={{ width: `${Math.min(100, (cooldown.monthUsed / 2) * 100)}%` }}
+                                        className={`h-full ${cooldown.isMonthlyMax ? "bg-yellow-500" : "bg-netflix-red"}`}
+                                        style={{ width: `${Math.min(100, (cooldown.monthUsed / cooldown.max) * 100)}%` }}
                                       />
                                     </div>
                                   </div>
@@ -1099,13 +1061,9 @@ export default function AdminPage() {
                                     <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded text-[11px] font-semibold">
                                       Expired
                                     </span>
-                                  ) : cooldown.inCooldown ? (
-                                    <span className="bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1 w-fit">
-                                      <Clock className="w-3 h-3" /> {cooldown.daysLeft}d cooldown ({cooldown.nextAllowedDate})
-                                    </span>
                                   ) : cooldown.isMonthlyMax ? (
                                     <span className="bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded text-[11px] font-medium">
-                                      2/2 Used this month
+                                      TV limit used this month
                                     </span>
                                   ) : (
                                     <span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1 w-fit">
@@ -1115,13 +1073,13 @@ export default function AdminPage() {
                                 </td>
                                 <td className="py-3 px-4 text-right">
                                   <div className="flex items-center justify-end gap-1.5">
-                                    {(cooldown.inCooldown || cooldown.isMonthlyMax) && (
+                                    {cooldown.isMonthlyMax && (
                                       <Button
                                         onClick={() => handleResetCooldown(c.id)}
                                         size="sm"
                                         variant="outline"
                                         className="h-7 text-[11px] px-2 border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10 cursor-pointer"
-                                        title="Reset 15-day cooldown so user can attempt again immediately"
+                                        title="Give this customer a full TV login allowance again from now"
                                       >
                                         Reset Limit
                                       </Button>
@@ -1172,7 +1130,7 @@ export default function AdminPage() {
             )}
 
             {/* 3. NETFLIX COOKIE VAULT TAB */}
-            {activeTab === "cookies" && (
+            {!storageError && activeTab === "cookies" && (
               <div className="space-y-4 animate-fade-in">
                 {/* Storage & Auto-Keepalive Status Bar */}
                 <div className="bg-netflix-card border border-netflix-border rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -1183,21 +1141,21 @@ export default function AdminPage() {
                       </span>
                     ) : (
                       <span
-                        className="bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2.5 py-1 rounded-md font-semibold flex items-center gap-1.5"
-                        title={storageInfo?.details || "Sessions stored in temporary server memory. Run SQL in Supabase to persist."}
+                        className="bg-red-500/15 text-red-300 border border-red-500/40 px-2.5 py-1 rounded-md font-semibold flex items-center gap-1.5"
+                        title={storageInfo?.details || "Storage status unknown"}
                       >
-                        <Database className="w-3.5 h-3.5" /> Storage: {storageInfo?.label || "Local/temporary"}
+                        <Database className="w-3.5 h-3.5" /> Storage: {storageInfo ? "error" : "checking..."}
                       </span>
                     )}
                     {storageInfo?.details && !storageInfo.isPersistent && (
-                      <span className="text-[11px] text-amber-300/80 font-mono">
+                      <span className="text-[11px] text-red-300/80 font-mono">
                         ({storageInfo.details})
                       </span>
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 text-netflix-muted font-mono text-[11px]">
                     <Clock className="w-3.5 h-3.5 text-netflix-light" />
-                    <span>Auto-Keepalive: Scheduled every 6h via Vercel Cron</span>
+                    <span>Auto-Keepalive: every 6h (GitHub Actions) + daily Vercel cron</span>
                   </div>
                 </div>
 
@@ -1242,9 +1200,8 @@ export default function AdminPage() {
                     const isNeedsReimport = acc.status === "needs_reimport"
                     const isExpired = acc.status === "expired" || acc.lastResult === "expired"
                     const isExpiringSoon = acc.status === "expiring_soon"
-                    const isLive =
-                      acc.status === "live" ||
-                      (acc.lastResult === "working" && !isNeedsReimport && !isExpiringSoon && !isExpired)
+                    const isUnverified = acc.status === "unverified"
+                    const isLive = acc.status === "live"
 
                     return (
                       <Card
@@ -1277,6 +1234,13 @@ export default function AdminPage() {
                           ) : isExpired ? (
                             <span className="bg-red-950/40 text-red-300 border border-red-800/40 text-xs px-2.5 py-0.5 rounded font-semibold flex items-center gap-1">
                               <XCircle className="w-3.5 h-3.5" /> Expired
+                            </span>
+                          ) : isUnverified ? (
+                            <span
+                              className="bg-sky-500/20 text-sky-300 border border-sky-500/30 text-xs px-2.5 py-0.5 rounded font-semibold"
+                              title="Netflix could not be reached on the last check"
+                            >
+                              Unverified
                             </span>
                           ) : (
                             <span className="bg-yellow-500/20 text-yellow-400 text-xs px-2.5 py-0.5 rounded font-semibold">
@@ -1395,7 +1359,7 @@ export default function AdminPage() {
             )}
 
             {/* 4. ACTIVITY LOGS TAB */}
-            {activeTab === "logs" && (
+            {!storageError && activeTab === "logs" && (
               <div className="space-y-4 animate-fade-in">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-bold text-white">Live Activity & Activation Log</h2>
@@ -1448,59 +1412,32 @@ export default function AdminPage() {
             )}
 
             {/* 5. SETTINGS TAB */}
-            {activeTab === "settings" && (
+            {!storageError && activeTab === "settings" && (
               <div className="space-y-6 max-w-2xl animate-fade-in">
                 <Card className="bg-netflix-card border-netflix-border p-6 rounded-xl space-y-5">
                   <h2 className="text-base font-bold text-white">General & Security Settings</h2>
 
                   <form onSubmit={handleSaveSettings} className="space-y-4">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-netflix-light block">Admin Passcode</label>
+                    <div className="bg-netflix-dark/60 border border-netflix-border/50 rounded-lg p-3 text-[11px] text-netflix-muted space-y-1">
+                      <p>
+                        <span className="text-netflix-light font-medium">Admin password:</span> set with the{" "}
+                        <code className="font-mono">ADMIN_PASSWORD</code> environment variable in Vercel. Changing it signs out every admin session.
+                      </p>
+                      <p>
+                        <span className="text-netflix-light font-medium">Support WhatsApp:</span> +91 97728 80079
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5 max-w-xs">
+                      <label className="text-xs font-medium text-netflix-light block">TV logins per customer per calendar month</label>
                       <Input
-                        type="text"
-                        placeholder="Leave blank to keep current ('6Ce0hegpwr8.')"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
+                        type="number"
+                        value={maxUpdates}
+                        onChange={(e) => setMaxUpdates(e.target.value)}
                         className="bg-netflix-input border-netflix-border text-white text-xs h-10"
+                        min={1}
                       />
-                      <p className="text-[11px] text-netflix-muted">Current passcode is configured as requested</p>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-netflix-light block">Support WhatsApp Number</label>
-                      <Input
-                        type="text"
-                        placeholder="e.g. 919772880079"
-                        value={supportWhatsapp}
-                        onChange={(e) => setSupportWhatsapp(e.target.value)}
-                        className="bg-netflix-input border-netflix-border text-white text-xs h-10 font-mono"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-netflix-light block">Max Attempts / Month</label>
-                        <Input
-                          type="number"
-                          value={maxUpdates}
-                          onChange={(e) => setMaxUpdates(e.target.value)}
-                          className="bg-netflix-input border-netflix-border text-white text-xs h-10"
-                          min={1}
-                        />
-                        <p className="text-[11px] text-netflix-muted">Default: 2 attempts</p>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-netflix-light block">Cooldown Period (Days)</label>
-                        <Input
-                          type="number"
-                          value={cooldownDaysInput}
-                          onChange={(e) => setCooldownDaysInput(e.target.value)}
-                          className="bg-netflix-input border-netflix-border text-white text-xs h-10"
-                          min={1}
-                        />
-                        <p className="text-[11px] text-netflix-muted">Default: 15 days between logins</p>
-                      </div>
+                      <p className="text-[11px] text-netflix-muted">Default: 2. Household updates are unlimited.</p>
                     </div>
 
                     {settingsSuccess && <p className="text-green-400 text-xs font-medium">{settingsSuccess}</p>}

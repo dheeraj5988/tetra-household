@@ -6,25 +6,22 @@ export const dynamic = 'force-dynamic';
 // Columns the app writes to each table. Used only to report what is missing.
 const EXPECTED_COLUMNS: Record<string, string[]> = {
   cookie_pool: [
-    'id', 'platform', 'profile_name', 'account_label', 'account_email', 'user_agent',
-    'device_metadata', 'cookies', 'status', 'earliest_expiry', 'earliest_expiry_iso',
-    'last_checked_at', 'last_refreshed_at', 'last_result', 'last_detail',
+    'id', 'profile_name', 'account_label', 'account_email', 'user_agent', 'device_metadata', 'cookies',
+    'status', 'earliest_expiry', 'last_checked_at', 'last_refreshed_at', 'last_result', 'last_detail',
     'consecutive_failures', 'created_at', 'updated_at',
   ],
   subscribers: [
-    'id', 'mobile', 'service', 'subscription_date', 'validity', 'expiry_date',
-    'assigned_account_id', 'is_blocked', 'total_updates', 'last_update_at', 'history',
-    'created_at', 'updated_at',
+    'id', 'mobile', 'service', 'subscription_date', 'validity', 'expiry_date', 'assigned_account_id',
+    'is_blocked', 'tv_quota_reset_at', 'created_at', 'updated_at',
   ],
-  activations: ['id', 'mobile', 'action', 'code', 'ip', 'status', 'account_used', 'created_at'],
-  app_settings: ['id', 'company_name', 'support_whatsapp', 'max_updates_per_month', 'updated_at'],
+  activations: ['id', 'subscriber_id', 'mobile', 'action', 'code', 'ip', 'status', 'account_id', 'notes', 'created_at'],
+  app_settings: ['id', 'company_name', 'support_whatsapp', 'max_tv_logins_per_month', 'log_retention_days', 'updated_at'],
 };
 
 type TableReport = {
   exists: boolean;
   rows?: number | null;
   missingColumns?: string[];
-  idAcceptsText?: boolean;
   anonCanRead?: boolean;
   error?: string;
 };
@@ -83,7 +80,6 @@ export async function GET() {
         })
       );
 
-      const { error: idErr } = await admin.from(table).select('id').eq('id', 'text-id-probe').limit(1);
 
       let anonCanRead: boolean | undefined;
       if (anon) {
@@ -95,19 +91,29 @@ export async function GET() {
         exists: true,
         rows: count,
         missingColumns: missing.sort(),
-        idAcceptsText: !idErr,
         anonCanRead,
       };
     })
   );
 
-  const ok = Object.values(tables).every((t) => t.exists);
+  const { data: rpcProbe, error: rpcErr } = await admin.rpc('tetra_record_tv_login', {
+    p_mobile: '0000000000',
+    p_code: 'HEALTH',
+    p_ip: 'health-check',
+  });
+  const tvLoginFunction = !rpcErr && (rpcProbe as any)?.reason === 'not_found';
+
+  const ok =
+    tvLoginFunction &&
+    Object.values(tables).every((t) => t.exists && !t.missingColumns?.length && !t.anonCanRead) &&
+    (tables.app_settings?.rows ?? 0) > 0;
   return NextResponse.json(
     {
       status: ok ? 'ok' : 'error',
       storage: ok ? 'Supabase (permanent)' : 'error',
       env,
       tables,
+      tvLoginFunction: tvLoginFunction ? 'ok' : rpcErr?.message || 'missing',
       timestamp: new Date().toISOString(),
     },
     { status: ok ? 200 : 503 }

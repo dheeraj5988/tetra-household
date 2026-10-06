@@ -180,21 +180,11 @@ export default function NetflixHouseholdUpdater() {
         return
       }
 
-      // Fetch Gmail verification link
-      const response = await fetchLatestNetflixLink(30)
+      // Fetch Gmail verification link (the server checks the customer again and logs the update)
+      const response = await fetchLatestNetflixLink(mobileNumber, 30)
 
       if (response && response.success && response.link) {
         setNetflixLink(response.link)
-        // Record update attempt in log
-        try {
-          await fetch("/api/record-update", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mobile: mobileNumber }),
-          })
-        } catch {
-          // ignore
-        }
         setStatus("household_success")
       } else {
         const errorMsg = response?.message || response?.error || "Failed to fetch Netflix verification email link"
