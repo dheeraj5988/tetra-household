@@ -1,9 +1,9 @@
 import { BrowserCookie, buildCookieHeader } from './netflix-cookies';
-import { NetflixAccount } from './store';
+import { NetflixAccount, saveAccountHealth } from './store';
 
 export interface KeepaliveReport {
   ok: boolean;
-  status: 'live' | 'expiring_soon' | 'needs_reimport' | 'expired';
+  status: 'live' | 'expiring_soon' | 'needs_reimport' | 'expired' | 'unverified';
   message: string;
   detail: string;
   checkedAt: string;
@@ -207,17 +207,30 @@ export async function runAccountKeepalive(account: NetflixAccount): Promise<Keep
 
     const location = res.headers.get('location') || '';
 
-    // Check if session was rejected by Netflix
-    if (
-      location.toLowerCase().includes('/login') ||
-      res.status === 401 ||
-      res.status === 403
-    ) {
+    // Netflix sends logged-out sessions to /login
+    if (location.toLowerCase().includes('/login')) {
       return {
         ok: false,
         status: 'needs_reimport',
         message: 'Netflix session invalidated',
         detail: `Netflix rejected the session and redirected to login (${location || res.status}). Manual re-import required.`,
+        checkedAt,
+        refreshedAt: account.lastRefreshedAt || null,
+        cookiesCount: cookies.length,
+        renewedCount: 0,
+        earliestExpiryIso,
+        updatedCookies: cookies,
+      };
+    }
+
+    // Any other non-success answer (e.g. bot protection blocking the server's IP)
+    // says nothing about the session itself.
+    if (res.status >= 400) {
+      return {
+        ok: false,
+        status: 'unverified',
+        message: 'Could not verify with Netflix',
+        detail: `Netflix answered HTTP ${res.status} without a login redirect. The session may still be fine; try again later.`,
         checkedAt,
         refreshedAt: account.lastRefreshedAt || null,
         cookiesCount: cookies.length,
@@ -250,7 +263,7 @@ export async function runAccountKeepalive(account: NetflixAccount): Promise<Keep
     const isExpiringSoon = newEarliest !== null && newEarliest * 1000 - nowMs < sevenDaysMs;
 
     const finalStatus: 'live' | 'expiring_soon' = isExpiringSoon ? 'expiring_soon' : 'live';
-    const refreshedAt = renewedCount > 0 ? checkedAt : (account.lastRefreshedAt || checkedAt);
+    const refreshedAt = renewedCount > 0 ? checkedAt : account.lastRefreshedAt || null;
 
     let detail = `Verified with Netflix (HTTP ${res.status}). Session is active`;
     if (renewedCount > 0) {
@@ -273,18 +286,11 @@ export async function runAccountKeepalive(account: NetflixAccount): Promise<Keep
       updatedCookies: merged,
     };
   } catch (err: any) {
-    // If request timed out or network error (e.g. temporary datacenter jitter),
-    // keep status as live/expiring_soon if local cookies are still valid
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    const isExpiringSoon = earliestExpiry !== null && earliestExpiry * 1000 - nowMs < sevenDaysMs;
-
     return {
-      ok: true,
-      status: isExpiringSoon ? 'expiring_soon' : 'live',
-      message: 'Active (Locally Verified)',
-      detail: `Netflix check timed out or unreachable (${err.message || 'network timeout'}). Essential auth tokens remain valid until ${
-        earliestExpiryIso ? new Date(earliestExpiryIso).toLocaleDateString('en-IN') : 'session end'
-      }.`,
+      ok: false,
+      status: 'unverified',
+      message: 'Could not reach Netflix',
+      detail: `Netflix check failed (${err?.name === 'AbortError' ? 'timeout' : err?.message || 'network error'}). Status unknown until the next check.`,
       checkedAt,
       refreshedAt: account.lastRefreshedAt || null,
       cookiesCount: cookies.length,
@@ -293,4 +299,23 @@ export async function runAccountKeepalive(account: NetflixAccount): Promise<Keep
       updatedCookies: cookies,
     };
   }
+}
+
+/**
+ * Runs the keepalive for one account and saves the result to Supabase,
+ * including any refreshed cookies Netflix returned.
+ */
+export async function checkAndSaveAccount(account: NetflixAccount) {
+  const report = await runAccountKeepalive(account);
+  const saved = await saveAccountHealth(account, {
+    ok: report.ok,
+    cookies: report.updatedCookies,
+    status: report.status,
+    lastResult: report.ok ? (report.renewedCount > 0 ? 'refreshed' : 'working') : report.status,
+    lastDetail: report.detail || report.message,
+    lastCheckedAt: report.checkedAt,
+    lastRefreshedAt: report.refreshedAt,
+    earliestExpiryIso: report.earliestExpiryIso,
+  });
+  return { report, account: saved };
 }
