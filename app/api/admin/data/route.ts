@@ -12,11 +12,12 @@ import {
 } from '@/lib/store';
 import { adminRoute } from '@/lib/api-response';
 import { calculateExpiryDate } from '@/lib/validity';
+import { buildInfo } from '@/lib/version';
 
 export const GET = adminRoute(async () => {
   const storage = await getStorageStatus();
   if (!storage.ok) {
-    return NextResponse.json({ ok: false, storageError: true, message: storage.details, storage }, { status: 503 });
+    return NextResponse.json({ ok: false, storageError: true, message: storage.details, storage, build: buildInfo() }, { status: 503 });
   }
 
   const [customers, accounts, settings, activations, monthLogins] = await Promise.all([
@@ -71,6 +72,7 @@ export const GET = adminRoute(async () => {
   return NextResponse.json({
     ok: true,
     storage,
+    build: buildInfo(),
     data: { customers: customersOut, netflixCookies: accounts, settings, activationsLog: activations, metrics },
   });
 });

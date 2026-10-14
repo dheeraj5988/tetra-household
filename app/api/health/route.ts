@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { buildInfo } from '@/lib/version';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +50,7 @@ export async function GET() {
       {
         status: 'error',
         storage: 'error',
+        build: buildInfo(),
         message: !url
           ? 'SUPABASE_URL is not set'
           : 'SUPABASE_SERVICE_ROLE_KEY is not set',
@@ -111,6 +113,7 @@ export async function GET() {
     {
       status: ok ? 'ok' : 'error',
       storage: ok ? 'Supabase (permanent)' : 'error',
+      build: buildInfo(),
       env,
       tables,
       tvLoginFunction: tvLoginFunction ? 'ok' : rpcErr?.message || 'missing',

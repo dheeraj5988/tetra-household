@@ -148,6 +148,7 @@ export default function AdminPage() {
   } | null>(null)
 
   const [storageError, setStorageError] = useState("")
+  const [build, setBuild] = useState<{ version: string; commit: string } | null>(null)
 
   // Settings state
   const [maxUpdates, setMaxUpdates] = useState("2")
@@ -222,6 +223,7 @@ export default function AdminPage() {
         cache: "no-store",
       })
       const data = await res.json()
+      if (data.build) setBuild(data.build)
       if (res.ok && data.ok) {
         setStorageError("")
         setCustomers(data.data.customers || [])
@@ -677,7 +679,18 @@ export default function AdminPage() {
             T
           </div>
           <div>
-            <h1 className="font-bold text-white text-base leading-tight">Tetra Digital Services</h1>
+            <h1 className="font-bold text-white text-base leading-tight">
+              Tetra Digital Services
+              {build && (
+                <span
+                  className="ml-2 align-middle text-[10px] font-mono font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.5"
+                  title={build.commit ? `Deployed from commit ${build.commit}` : "Running version"}
+                >
+                  v{build.version}
+                  {build.commit ? ` · ${build.commit}` : ""}
+                </span>
+              )}
+            </h1>
             <p className="text-netflix-muted text-[11px]">Netflix Customer & TV Code Admin Portal</p>
           </div>
         </div>
