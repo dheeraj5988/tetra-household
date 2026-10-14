@@ -1,4 +1,4 @@
-# 🎬 Netflix Household Updater
+# 🎬 Netflix Household Updater - Tetra
 
 A full-stack web application for managing Netflix household device verification. The app validates user access and automatically fetches the latest Netflix verification links from Gmail.
 
